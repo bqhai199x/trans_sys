@@ -1,69 +1,72 @@
-using System.Buffers;
-using System.Text;
 using FileHandler.Api.Common;
+using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Markdown;
 
+/// <summary>
+/// Reads, validates, decodes, and encodes Markdown UTF-8 source streams.
+/// </summary>
 internal static class MarkdownSourceReader
 {
-    private static readonly UTF8Encoding StrictUtf8 = new(false, true);
 
-    public static async Task<(MarkdownSource? Source, FileError? Error)> ReadAsync(
-        Stream stream, long maxBytes, CancellationToken cancellationToken)
-    {
-        var buffer = ArrayPool<byte>.Shared.Rent(81920);
-        try
+    /// <summary>
+    /// Reads size-limited stream and validates its UTF-8 encoding.
+    /// </summary>
+    /// <param name="stream">Source stream, left open after reading.</param>
+    /// <param name="maxBytes">Maximum source byte count.</param>
+    /// <param name="cancellationToken">Token for cancelling this operation.</param>
+    /// <returns>Task containing decoded source or size or encoding error.</returns>
+    public static Task<(MarkdownSource? Source, FileError? Error)> ReadAsync(Stream stream, long maxBytes, CancellationToken cancellationToken) =>
+        DebugTrace.TraceAsync<(MarkdownSource? Source, FileError? Error)>("MarkdownSourceReader", "ReadAsync", () => new { stream, maxBytes, cancellationToken }, async _ =>
         {
-            using var output = new MemoryStream();
-            while (true)
-            {
-                var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
-                if (read == 0) break;
-                if (output.Length + read > maxBytes)
-                    return (null, new("file_too_large", $"Tệp vượt giới hạn {maxBytes} byte."));
-                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
-            }
+            var (source, error) = await Utf8TextReader.ReadAsync(stream, maxBytes, cancellationToken);
+            return source is null ? (null, error) : (new MarkdownSource(source.Bytes, source.Text, source.HasBom, BuildLineMap(source.Text)), null);
+        });
 
-            var bytes = output.ToArray();
-            try
-            {
-                var source = DecodeUtf8(bytes);
-                return (source, null);
-            }
-            catch (DecoderFallbackException)
-            {
-                return (null, new("invalid_encoding", "Tệp phải dùng UTF-8 hợp lệ."));
-            }
-        }
-        finally { ArrayPool<byte>.Shared.Return(buffer); }
-    }
-
-    internal static MarkdownSource DecodeUtf8(byte[] bytes)
-    {
-        var hasBom = bytes.AsSpan().StartsWith(Encoding.UTF8.Preamble);
-        var offset = hasBom ? Encoding.UTF8.Preamble.Length : 0;
-        var text = StrictUtf8.GetString(bytes, offset, bytes.Length - offset);
-        return new(bytes, text, hasBom, BuildLineMap(text));
-    }
-
-    internal static LineMap BuildLineMap(string text)
-    {
-        var starts = new List<int> { 0 };
-        for (var i = 0; i < text.Length; i++)
+    /// <summary>
+    /// Decodes strict UTF-8 and records BOM and line offsets.
+    /// </summary>
+    /// <param name="bytes">Original source bytes.</param>
+    /// <returns>Decoded source with original bytes, BOM flag, and line offsets.</returns>
+    internal static MarkdownSource DecodeUtf8(byte[] bytes) =>
+        DebugTrace.Trace("MarkdownSourceReader", "DecodeUtf8", () => new { bytes }, _ =>
         {
-            if (text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n') { starts.Add(i + 2); i++; }
-            else if (text[i] is '\r' or '\n') starts.Add(i + 1);
-        }
-        return new(starts.ToArray());
-    }
+            var source = Utf8TextReader.DecodeUtf8(bytes);
+            return new MarkdownSource(bytes, source.Text, source.HasBom, BuildLineMap(source.Text));
+        });
 
-    internal static byte[] Encode(string text, bool bom)
-    {
-        var content = StrictUtf8.GetBytes(text);
-        if (!bom) return content;
-        var result = new byte[Encoding.UTF8.Preamble.Length + content.Length];
-        Encoding.UTF8.Preamble.CopyTo(result.AsSpan());
-        content.CopyTo(result, Encoding.UTF8.Preamble.Length);
-        return result;
-    }
+    /// <summary>
+    /// Indexes line starts across CR, LF, and CRLF line endings.
+    /// </summary>
+    /// <param name="text">Text to process.</param>
+    /// <returns>Zero-based line start offsets.</returns>
+    internal static LineMap BuildLineMap(string text) =>
+        DebugTrace.Trace("MarkdownSourceReader", "BuildLineMap", () => new { text }, _ =>
+        {
+            var starts = new List<int>
+            {
+                0
+            };
+            for (var i = 0; i < text.Length; i++)
+            {
+                if (text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n')
+                {
+                    starts.Add(i + 2);
+                    i++;
+                }
+                else if (text[i] is '\r' or '\n')
+                    starts.Add(i + 1);
+            }
+
+            return new LineMap(starts.ToArray());
+        });
+
+    /// <summary>
+    /// Encodes text as strict UTF-8 with optional BOM.
+    /// </summary>
+    /// <param name="text">Text to process.</param>
+    /// <param name="bom">Whether to include UTF-8 BOM.</param>
+    /// <returns>UTF-8 bytes with BOM when requested.</returns>
+    internal static byte[] Encode(string text, bool bom) =>
+        DebugTrace.Trace("MarkdownSourceReader", "Encode", () => new { text, bom }, _ => Utf8TextReader.Encode(text, bom));
 }

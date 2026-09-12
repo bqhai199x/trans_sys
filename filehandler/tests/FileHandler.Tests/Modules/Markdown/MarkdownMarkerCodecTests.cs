@@ -2,8 +2,16 @@ using FileHandler.Api.Modules.Markdown;
 
 namespace FileHandler.Tests.Modules.Markdown;
 
+/// <summary>
+/// Unit tests for Markdown preservation marker encoding and parsing.
+/// </summary>
 public sealed class MarkdownMarkerCodecTests
 {
+
+    /// <summary>
+    /// Verifies that literal marker IDs are reserved, including leading zeros.
+    /// </summary>
+    /// <returns>No return value.</returns>
     [Fact]
     public void ReservesLiteralIdsIncludingLeadingZeros()
     {

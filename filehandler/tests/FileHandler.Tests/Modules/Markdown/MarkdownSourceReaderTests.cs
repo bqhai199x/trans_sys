@@ -3,8 +3,16 @@ using FileHandler.Api.Modules.Markdown;
 
 namespace FileHandler.Tests.Modules.Markdown;
 
+/// <summary>
+/// Unit tests for Markdown UTF-8 reader, BOM preservation, and line indexing.
+/// </summary>
 public sealed class MarkdownSourceReaderTests
 {
+
+    /// <summary>
+    /// Verifies BOM detection and line mapping for mixed line endings.
+    /// </summary>
+    /// <returns>No return value.</returns>
     [Fact]
     public void PreservesBomAndMixedLines()
     {
@@ -15,6 +23,10 @@ public sealed class MarkdownSourceReaderTests
         Assert.Equal(bytes, MarkdownSourceReader.Encode(source.Text, source.HasBom));
     }
 
+    /// <summary>
+    /// Verifies that invalid UTF-8 returns encoding error.
+    /// </summary>
+    /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task RejectsInvalidUtf8()
     {
@@ -22,6 +34,10 @@ public sealed class MarkdownSourceReaderTests
         Assert.Equal("invalid_encoding", result.Error?.Code);
     }
 
+    /// <summary>
+    /// Verifies that byte limit applies to actual stream content.
+    /// </summary>
+    /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task EnforcesActualStreamLimit()
     {

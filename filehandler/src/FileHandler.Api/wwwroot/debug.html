@@ -1,0 +1,1453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FileHandler · Debug Trace Viewer</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --bg-panel: #ffffff;
+      --bg-card: #f1f5f9;
+      --bg-hover: #e2e8f0;
+      --border: #e2e8f0;
+      --border-focus: #3b82f6;
+      --text: #0f172a;
+      --text-muted: #475569;
+      --text-dim: #94a3b8;
+      --blue-bg: #eff6ff;
+      --blue-border: #3b82f6;
+      --blue-text: #1d4ed8;
+      --green-bg: #f0fdf4;
+      --green-border: #22c55e;
+      --green-text: #15803d;
+      --yellow-bg: #fffbeb;
+      --yellow-border: #f59e0b;
+      --yellow-text: #b45309;
+      --red-bg: #fef2f2;
+      --red-border: #ef4444;
+      --red-text: #b91c1c;
+      --purple-bg: #faf5ff;
+      --purple-border: #a855f7;
+      --purple-text: #7e22ce;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* Header */
+    header {
+      background: var(--bg-panel);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.03);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      color: #0f172a;
+      letter-spacing: -0.2px;
+    }
+
+    .brand-icon {
+      font-size: 18px;
+      color: #3b82f6;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .toggle-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--bg-card);
+      color: var(--text-muted);
+      transition: all 0.2s;
+    }
+    .toggle-btn.active {
+      background: var(--green-bg);
+      border-color: var(--green-border);
+      color: var(--green-text);
+    }
+    .toggle-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--text);
+      transition: all 0.15s;
+    }
+    .btn:hover { background: var(--bg-card); }
+    .btn-danger { color: #dc2626; }
+    .btn-danger:hover { background: var(--red-bg); border-color: var(--red-border); }
+
+    .input-field {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 12px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .input-field:focus { border-color: var(--border-focus); box-shadow: 0 0 0 2px rgba(59,130,246,0.15); }
+
+    /* Main Content Layout */
+    .content-area {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* Left Panel: Log List */
+    .list-panel {
+      width: 360px;
+      min-width: 300px;
+      max-width: 420px;
+      border-right: 1px solid var(--border);
+      background: var(--bg-panel);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .list-header {
+      padding: 8px 14px;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 1px solid var(--border);
+      background: #fafafa;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .status-select {
+      font-size: 11px;
+      padding: 3px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--text-muted);
+    }
+
+    .log-items {
+      flex: 1;
+      overflow-y: auto;
+      list-style: none;
+    }
+
+    .log-item {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.15s;
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .log-item:hover { background: #f8fafc; }
+    .log-item.selected {
+      background: #eff6ff;
+      border-left: 3px solid var(--blue-border);
+    }
+
+    .log-item-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .log-item-badges {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+    .badge-method { background: var(--blue-bg); color: var(--blue-text); border: 1px solid #bfdbfe; }
+    .badge-status-2xx { background: var(--green-bg); color: var(--green-text); border: 1px solid #bbf7d0; }
+    .badge-status-4xx { background: var(--yellow-bg); color: var(--yellow-text); border: 1px solid #fde68a; }
+    .badge-status-5xx { background: var(--red-bg); color: var(--red-text); border: 1px solid #fecaca; }
+
+    .log-file-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      word-break: break-all;
+    }
+
+    .log-item-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .delete-item-btn {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      font-size: 13px;
+      padding: 2px 4px;
+      border-radius: 4px;
+      transition: all 0.15s;
+    }
+    .delete-item-btn:hover { color: var(--red-text); background: var(--red-bg); }
+
+    /* Right Panel: Detail Tree View */
+    .detail-panel {
+      flex: 1;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .detail-header {
+      padding: 10px 18px;
+      background: #ffffff;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+    }
+
+    .detail-title-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .detail-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .trace-search-box {
+      width: 220px;
+      font-size: 12px;
+    }
+
+    .match-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      background: #fef08a;
+      color: #854d0e;
+      border: 1px solid #facc15;
+    }
+
+    .tree-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 20px;
+    }
+
+    .empty-placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      color: var(--text-dim);
+      gap: 10px;
+      font-size: 14px;
+    }
+
+    /* Tree View Nodes */
+    .tree-node {
+      margin-left: 18px;
+      border-left: 2px solid var(--border);
+      padding-left: 10px;
+      margin-top: 6px;
+      margin-bottom: 6px;
+    }
+    .tree-node.root-node {
+      margin-left: 0;
+      border-left: none;
+      padding-left: 0;
+    }
+
+    .node-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: background 0.1s;
+    }
+    .node-header:hover { background: #e2e8f0; }
+    .node-header:hover .copy-fn-btn { opacity: 0.85; }
+    .node-header.highlight {
+      background: #fef9c3;
+      outline: 1px solid #eab308;
+    }
+
+    .node-caret {
+      font-size: 10px;
+      color: var(--text-muted);
+      width: 14px;
+      text-align: center;
+      transition: transform 0.15s;
+    }
+    .node-caret.collapsed { transform: rotate(-90deg); }
+
+    .node-title {
+      font-weight: 600;
+      color: #0f172a;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      user-select: text;
+      cursor: text;
+    }
+
+    .copy-fn-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      color: #64748b;
+      cursor: pointer;
+      padding: 1px 5px;
+      font-size: 11px;
+      opacity: 0;
+      transition: opacity 0.15s, background 0.15s, color 0.15s;
+    }
+    .copy-fn-btn:hover {
+      opacity: 1 !important;
+      background: #f8fafc;
+      color: #0f172a;
+      border-color: #94a3b8;
+    }
+    .copy-fn-btn.copied {
+      opacity: 1 !important;
+      color: #16a34a;
+      border-color: #86efac;
+      background: #f0fdf4;
+      font-weight: 700;
+    }
+
+    .node-time {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-style: italic;
+      margin-left: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .node-body {
+      margin-top: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .node-body.collapsed { display: none; }
+
+    /* Collapsible Sections (In, Out, State, Error) */
+    .val-section {
+      margin-left: 22px;
+      margin-top: 4px;
+      margin-bottom: 4px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      overflow: hidden;
+    }
+
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 12px;
+      font-weight: 600;
+      background: #fafafa;
+      border-bottom: 1px solid transparent;
+      transition: background 0.15s;
+    }
+    .section-header:hover { background: #f1f5f9; }
+    .section-header.open { border-bottom-color: var(--border); }
+
+    .section-caret {
+      font-size: 9px;
+      color: var(--text-muted);
+      width: 12px;
+      text-align: center;
+      transition: transform 0.15s;
+    }
+    .section-caret.collapsed { transform: rotate(-90deg); }
+
+    .section-content {
+      padding: 6px 10px;
+    }
+    .section-content.collapsed { display: none; }
+
+    .section-label {
+      font-weight: 700;
+      font-size: 10px;
+      padding: 1px 6px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .section-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: normal;
+      margin-left: auto;
+    }
+
+    /* Section Specific Styles */
+    .val-in { border-left: 3px solid #3b82f6; }
+    .val-in .section-header { background: #eff6ff; color: #1d4ed8; }
+    .tag-in { background: #dbeafe; color: #1d4ed8; }
+
+    .val-out { border-left: 3px solid #22c55e; }
+    .val-out .section-header { background: #f0fdf4; color: #15803d; }
+    .tag-out { background: #dcfce7; color: #15803d; }
+
+    .val-state { border-left: 3px solid #f59e0b; }
+    .val-state .section-header { background: #fffbeb; color: #b45309; }
+    .tag-state { background: #fef3c7; color: #b45309; }
+
+    .val-error { border-left: 3px solid #ef4444; }
+    .val-error .section-header { background: #fef2f2; color: #b91c1c; }
+    .tag-error { background: #fee2e2; color: #b91c1c; }
+
+    /* State Variables Table / List Inside Content */
+    .state-vars-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .state-var-inline {
+      display: flex;
+      align-items: baseline;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding: 3px 6px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      word-break: break-all;
+    }
+    .state-var-inline:hover {
+      background: #f8fafc;
+      border-radius: 4px;
+    }
+
+    .state-var-name {
+      font-weight: 700;
+      color: #0369a1; /* Exactly the same as .json-key */
+      white-space: nowrap;
+    }
+
+    .state-var-flow {
+      display: inline-flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .state-arrow {
+      color: #94a3b8;
+      font-weight: 700;
+      font-size: 13px;
+      user-select: none;
+      padding: 0 2px;
+    }
+
+    .state-var-complex {
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
+      background: #ffffff;
+      overflow: hidden;
+      margin: 2px 0;
+    }
+
+    .state-var-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 10px;
+      cursor: pointer;
+      user-select: none;
+      font-size: 12px;
+      background: #f8fafc;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      transition: background 0.1s;
+    }
+    .state-var-header:hover { background: #f1f5f9; }
+
+    .state-var-body {
+      padding: 6px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .state-var-body.collapsed { display: none; }
+
+    .state-step-divider {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 2px 0;
+      color: #94a3b8;
+      font-weight: 700;
+      font-size: 13px;
+    }
+
+    /* JSON Syntax Highlighting */
+    .val-json {
+      white-space: pre-wrap;
+      font-size: 12px;
+      line-height: 1.5;
+      max-height: 340px;
+      overflow-y: auto;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      padding: 8px 12px;
+      border-radius: 6px;
+      color: #334155;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .json-key {
+      color: #0369a1;
+      font-weight: 700;
+    }
+    .json-colon {
+      color: #64748b;
+      font-weight: 600;
+      margin-right: 2px;
+    }
+    .json-string {
+      color: #16a34a;
+    }
+    .json-number {
+      color: #d97706;
+      font-weight: 600;
+    }
+    .json-boolean {
+      color: #7c3aed;
+      font-weight: 700;
+    }
+    .json-null {
+      color: #64748b;
+      font-style: italic;
+    }
+
+    /* Iteration Item scope */
+    .item-node {
+      border-left: 3px solid var(--purple-border);
+      background: #faf5ff;
+      border-radius: 0 6px 6px 0;
+      padding: 4px 8px;
+      margin-left: 18px;
+      margin-top: 4px;
+      margin-bottom: 4px;
+      border-top: 1px solid #f3e8ff;
+      border-right: 1px solid #f3e8ff;
+      border-bottom: 1px solid #f3e8ff;
+    }
+    .item-header {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--purple-text);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    mark {
+      background: #fde047;
+      color: #000000;
+      padding: 0 2px;
+      border-radius: 2px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation -->
+  <header>
+    <div class="brand">
+      <span class="brand-icon">⚡</span>
+      <span>FileHandler Debug Trace</span>
+    </div>
+
+    <div class="toolbar">
+      <!-- Debug Mode Toggle -->
+      <button id="toggle-debug-btn" class="toggle-btn" onclick="toggleDebugMode()">
+        <span class="toggle-dot"></span>
+        <span id="toggle-debug-text">Debug Mode: OFF</span>
+      </button>
+
+      <!-- Clear All Logs -->
+      <button class="btn btn-danger" onclick="clearAllLogs()">
+        <span>🗑</span> Clear All
+      </button>
+    </div>
+  </header>
+
+  <!-- Content Workspace -->
+  <div class="content-area">
+
+    <!-- Left Panel: Log List -->
+    <aside class="list-panel">
+      <div class="list-header">
+        <span id="log-count-text">Requests (0)</span>
+        <select id="status-filter" class="status-select" onchange="filterLogs()">
+          <option value="">All Statuses</option>
+          <option value="200">200 OK</option>
+          <option value="400">400 Bad</option>
+          <option value="415">415 Unsupported</option>
+          <option value="422">422 Error</option>
+          <option value="500">500 Server</option>
+        </select>
+      </div>
+      <ul class="log-items" id="log-list-container">
+        <!-- Log items rendered dynamically -->
+      </ul>
+    </aside>
+
+    <!-- Right Panel: Tree View -->
+    <main class="detail-panel">
+      <div class="detail-header" id="detail-header" style="display: none;">
+        <div class="detail-title-group">
+          <span class="badge badge-method" id="detail-method">POST</span>
+          <span style="font-weight:700;font-size:14px;color:#0f172a;" id="detail-file">sample.md</span>
+          <span style="font-family:monospace;font-size:12px;color:var(--text-muted);" id="detail-path">/export</span>
+          <span class="badge" id="detail-status">200</span>
+          <span style="color:var(--text-muted);font-size:12px;" id="detail-duration">12.3 ms</span>
+        </div>
+
+        <div class="detail-actions">
+          <!-- Search within this specific log -->
+          <input type="text" id="trace-search-input" class="input-field trace-search-box" placeholder="🔍 Search in this trace..." oninput="onTraceSearch(this.value)">
+          <span id="search-match-count" class="match-badge" style="display: none;">0 matches</span>
+
+          <button class="btn" onclick="expandAllNodes()">Expand All</button>
+          <button class="btn" onclick="collapseAllNodes()">Collapse All</button>
+          <button class="btn" onclick="copyTraceJson()">📋 Copy</button>
+          <button class="btn" onclick="downloadTraceJson()">⬇ Download</button>
+        </div>
+      </div>
+
+      <div class="tree-scroll" id="tree-container">
+        <div class="empty-placeholder">
+          <span style="font-size:32px;">📑</span>
+          <span>Select an /import or /export request from the left to view the trace</span>
+        </div>
+      </div>
+    </main>
+
+  </div>
+
+  <script>
+    let allLogs = [];
+    let selectedTraceId = null;
+    let currentTraceData = null;
+    let currentSearchTerm = "";
+    let searchDebounceTimer = null;
+    let currentLogRequestId = 0;
+
+    // Initialize application
+    document.addEventListener("DOMContentLoaded", () => {
+      fetchStatus();
+      loadLogs();
+      window.addEventListener("focus", () => loadLogs());
+    });
+
+    // Fetch Debug Status
+    async function fetchStatus() {
+      try {
+        const res = await fetch("/debug/status");
+        if (!res.ok) return;
+        const data = await res.json();
+        updateToggleState(data.enabled);
+      } catch (err) {
+        console.error("Failed to fetch debug status", err);
+      }
+    }
+
+    // Toggle Debug Mode
+    async function toggleDebugMode() {
+      const btn = document.getElementById("toggle-debug-btn");
+      const currentState = btn.classList.contains("active");
+      const newState = !currentState;
+
+      try {
+        const res = await fetch("/debug/toggle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: newState })
+        });
+        if (res.ok) {
+          updateToggleState(newState);
+          loadLogs();
+        }
+      } catch (err) {
+        console.error("Failed to toggle debug mode", err);
+      }
+    }
+
+    function updateToggleState(enabled) {
+      const btn = document.getElementById("toggle-debug-btn");
+      const text = document.getElementById("toggle-debug-text");
+      if (enabled) {
+        btn.classList.add("active");
+        text.textContent = "Debug Mode: ON";
+      } else {
+        btn.classList.remove("active");
+        text.textContent = "Debug Mode: OFF";
+      }
+    }
+
+    // Load logs list from server
+    async function loadLogs() {
+      const status = document.getElementById("status-filter").value.trim();
+      const params = new URLSearchParams();
+      if (status) params.append("status", status);
+
+      try {
+        const res = await fetch(`/debug/logs?${params.toString()}`);
+        if (!res.ok) return;
+        allLogs = await res.json();
+        renderLogList(allLogs);
+      } catch (err) {
+        console.error("Failed to load logs", err);
+      }
+    }
+
+    function filterLogs() {
+      loadLogs();
+    }
+
+    // Render log list in left panel showing request file name
+    function renderLogList(logs) {
+      const container = document.getElementById("log-list-container");
+      const countText = document.getElementById("log-count-text");
+      countText.textContent = `Requests (${logs.length})`;
+
+      if (logs.length === 0) {
+        container.innerHTML = `<li style="padding:24px;text-align:center;color:var(--text-dim);font-size:13px;">No trace logs found for /import or /export</li>`;
+        return;
+      }
+
+      container.innerHTML = logs.map(item => {
+        const isSelected = item.id === selectedTraceId ? "selected" : "";
+        const statusClass = item.status >= 500 ? "badge-status-5xx" : (item.status >= 400 ? "badge-status-4xx" : "badge-status-2xx");
+        const timeStr = new Date(item.timestamp).toLocaleTimeString();
+        const durationStr = item.durationMs ? `${item.durationMs.toFixed(1)} ms` : "--";
+        const displayName = item.requestFileName ? `📄 ${escapeHtml(item.requestFileName)}` : escapeHtml(item.path || "/");
+
+        const safeId = escapeHtml(item.id);
+        return `
+          <li class="log-item ${isSelected}" onclick="selectLog('${safeId}')">
+            <div class="log-item-top">
+              <div class="log-item-badges">
+                <span class="badge badge-method">${escapeHtml(item.method || "POST")}</span>
+                <span class="badge ${statusClass}">${item.status || "--"}</span>
+              </div>
+              <button class="delete-item-btn" title="Delete trace" onclick="event.stopPropagation(); deleteLog('${safeId}')">✕</button>
+            </div>
+            <div class="log-file-name">${displayName}</div>
+            <div class="log-item-sub">
+              <span>${escapeHtml(item.path || "/")}</span>
+              <span>${durationStr} · ${timeStr}</span>
+            </div>
+          </li>
+        `;
+      }).join("");
+    }
+
+    // Select single log
+    async function selectLog(id) {
+      const requestId = ++currentLogRequestId;
+      selectedTraceId = id;
+      currentTraceData = null;
+      renderLogList(allLogs);
+
+      const detailHeader = document.getElementById("detail-header");
+      const treeContainer = document.getElementById("tree-container");
+      const searchInput = document.getElementById("trace-search-input");
+      const matchBadge = document.getElementById("search-match-count");
+
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = null;
+      }
+      currentSearchTerm = "";
+      searchInput.value = "";
+      matchBadge.style.display = "none";
+
+      detailHeader.style.display = "none";
+      treeContainer.innerHTML = `<div class="empty-placeholder"><span>Loading trace...</span></div>`;
+
+      try {
+        const res = await fetch(`/debug/logs/${id}`);
+        if (requestId !== currentLogRequestId) return;
+        if (!res.ok) {
+          treeContainer.innerHTML = `<div class="empty-placeholder"><span>Trace not found</span></div>`;
+          return;
+        }
+
+        const data = await res.json();
+        if (requestId !== currentLogRequestId) return;
+        currentTraceData = data;
+
+        // Render header
+        detailHeader.style.display = "flex";
+        document.getElementById("detail-method").textContent = currentTraceData.method || "POST";
+        document.getElementById("detail-file").textContent = currentTraceData.fileName ? `📄 ${currentTraceData.fileName}` : (currentTraceData.path || "/");
+        document.getElementById("detail-path").textContent = currentTraceData.path || "/";
+
+        const statusBadge = document.getElementById("detail-status");
+        statusBadge.textContent = currentTraceData.status || 200;
+        statusBadge.className = `badge ${currentTraceData.status >= 500 ? "badge-status-5xx" : (currentTraceData.status >= 400 ? "badge-status-4xx" : "badge-status-2xx")}`;
+
+        document.getElementById("detail-duration").textContent = `${currentTraceData.durationMs?.toFixed(2) ?? "--"} ms`;
+
+        // Render Tree
+        renderTree(currentTraceData, "");
+      } catch (err) {
+        if (requestId !== currentLogRequestId) return;
+        console.error("Failed to load trace detail", err);
+        treeContainer.innerHTML = `<div class="empty-placeholder"><span>Failed to render trace</span></div>`;
+      }
+    }
+
+    // Search specifically within current selected log
+    function onTraceSearch(term) {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = setTimeout(() => {
+        currentSearchTerm = term.trim();
+        if (!currentTraceData) return;
+
+        const matchCount = countMatchesInTrace(currentTraceData, currentSearchTerm);
+        const matchBadge = document.getElementById("search-match-count");
+
+        if (currentSearchTerm && matchCount > 0) {
+          matchBadge.style.display = "inline-block";
+          matchBadge.textContent = `${matchCount} match${matchCount > 1 ? 'es' : ''}`;
+        } else if (currentSearchTerm) {
+          matchBadge.style.display = "inline-block";
+          matchBadge.textContent = "0 matches";
+        } else {
+          matchBadge.style.display = "none";
+        }
+
+        renderTree(currentTraceData, currentSearchTerm);
+
+        // Auto-expand nodes containing matches
+        if (currentSearchTerm) {
+          document.querySelectorAll(".node-body, .section-content, .state-var-body").forEach(body => {
+            if (body.querySelector("mark") || body.querySelector(".highlight")) {
+              body.classList.remove("collapsed");
+              const prev = body.previousElementSibling;
+              if (prev) {
+                const caret = prev.querySelector(".node-caret, .section-caret, .entry-caret");
+                if (caret) caret.classList.remove("collapsed");
+                if (prev.classList.contains("section-header")) prev.classList.add("open");
+              }
+            }
+          });
+        }
+      }, 200);
+    }
+
+    function countMatchesInTrace(trace, query) {
+      if (!query) return 0;
+      const json = JSON.stringify(trace);
+      const regex = new RegExp(escapeRegExp(query), "gi");
+      const matches = json.match(regex);
+      return matches ? matches.length : 0;
+    }
+
+    // Render tree nodes recursively
+    function renderTree(trace, query) {
+      const treeContainer = document.getElementById("tree-container");
+      const calls = trace.calls || [];
+
+      if (calls.length === 0) {
+        treeContainer.innerHTML = `<div class="empty-placeholder"><span>Trace has no recorded calls</span></div>`;
+        return;
+      }
+
+      const html = calls.map(rootCall => renderNode(rootCall, 0, query)).join("");
+      treeContainer.innerHTML = html;
+    }
+
+    function renderNode(node, depth, query) {
+      if (node.type === "item") {
+        return renderItemNode(node, depth, query);
+      }
+
+      const hasQuery = Boolean(query);
+      const isCollapsed = hasQuery ? "" : (depth >= 3 ? "collapsed" : "");
+      const targetName = node.target || "Method";
+      const isTargetMatch = query && targetName.toLowerCase().includes(query.toLowerCase());
+      const highlightClass = isTargetMatch ? "highlight" : "";
+
+      // Collapsible In Section
+      let inHtml = "";
+      if (node.in !== undefined && node.in !== null) {
+        inHtml = `
+          <div class="val-section val-in">
+            <div class="section-header open" onclick="toggleSection(this)">
+              <span class="section-caret">▼</span>
+              <span class="section-label tag-in">In</span>
+              <span class="section-sub">Input parameters</span>
+            </div>
+            <div class="section-content">
+              <div class="val-json">${syntaxHighlightJson(node.in, query)}</div>
+            </div>
+          </div>
+        `;
+      }
+
+      // Grouped Collapsible State Section (name: value for all variables in content)
+      let statesHtml = "";
+      if (node.states && node.states.length > 0) {
+        statesHtml = renderGroupedStateSection(node.states, query);
+      }
+
+      // Children Calls
+      let childrenHtml = "";
+      if (node.children && node.children.length > 0) {
+        childrenHtml = node.children.map(child => renderNode(child, depth + 1, query)).join("");
+      }
+
+      // Collapsible Out Section
+      let outHtml = "";
+      if (node.out !== undefined && node.out !== null) {
+        outHtml = `
+          <div class="val-section val-out">
+            <div class="section-header open" onclick="toggleSection(this)">
+              <span class="section-caret">▼</span>
+              <span class="section-label tag-out">Out</span>
+              <span class="section-sub">Return value</span>
+            </div>
+            <div class="section-content">
+              <div class="val-json">${syntaxHighlightJson(node.out, query)}</div>
+            </div>
+          </div>
+        `;
+      }
+
+      // Collapsible Error Section
+      let errorHtml = "";
+      if (node.error) {
+        errorHtml = `
+          <div class="val-section val-error">
+            <div class="section-header open" onclick="toggleSection(this)">
+              <span class="section-caret">▼</span>
+              <span class="section-label tag-error">Error</span>
+            </div>
+            <div class="section-content">
+              <div class="val-json">${syntaxHighlightJson(node.error, query)}</div>
+            </div>
+          </div>
+        `;
+      }
+
+      const timeText = node.durationMs ? `${node.durationMs.toFixed(3)} ms` : "";
+      const displayedTarget = query ? highlightText(targetName, query) : escapeHtml(targetName);
+
+      return `
+        <div class="tree-node ${depth === 0 ? 'root-node' : ''}">
+          <div class="node-header ${highlightClass}" onclick="toggleNode(this, event)">
+            <span class="node-caret ${isCollapsed}">▼</span>
+            <span class="node-title" title="Double click or select text to copy">[${node.id ?? 1}] ${displayedTarget}</span>
+            <button class="copy-fn-btn" title="Copy method name" onclick="copyMethodName(event, '${escapeHtml(targetName)}')">📋</button>
+            ${timeText ? `<span class="node-time">${timeText}</span>` : ''}
+          </div>
+          <div class="node-body ${isCollapsed}">
+            ${inHtml}
+            ${statesHtml}
+            ${childrenHtml}
+            ${outHtml}
+            ${errorHtml}
+          </div>
+        </div>
+      `;
+    }
+
+    // Render grouped state variables in content as name: value list
+    // If the same variable has multiple entries, show as name: val1 -> val2 -> ...
+    // Consecutive duplicate values are ignored and not counted as updates.
+    function renderGroupedStateSection(states, query) {
+      if (!states || states.length === 0) return "";
+
+      const groups = [];
+      const groupMap = new Map();
+
+      for (const s of states) {
+        const name = (s && s.name && s.name.trim()) ? s.name.trim() : "state";
+        if (!groupMap.has(name)) {
+          const entry = { name, rawValues: [] };
+          groupMap.set(name, entry);
+          groups.push(entry);
+        }
+        groupMap.get(name).rawValues.push(s.value);
+      }
+
+      const varsHtml = groups.map(group => {
+        // Filter out consecutive duplicate values
+        const values = [];
+        let lastJson = undefined;
+        for (const val of group.rawValues) {
+          let serialized;
+          try {
+            serialized = JSON.stringify(val);
+          } catch {
+            serialized = String(val);
+          }
+          if (serialized !== lastJson) {
+            values.push(val);
+            lastJson = serialized;
+          }
+        }
+
+        const displayedName = query ? highlightText(group.name, query) : escapeHtml(group.name);
+        const hasComplexValue = values.some(v => v !== null && typeof v === "object");
+
+        // Case 1: Simple/primitive values -> render inline: key: val 1 -> val 2 -> ...
+        if (!hasComplexValue) {
+          const flowHtml = values.map(val => syntaxHighlightJson(val, query)).join('<span class="state-arrow" title="mutated to">→</span>');
+          return `
+            <div class="state-var-inline">
+              <span class="state-var-name">${displayedName}:</span>
+              <div class="state-var-flow">${flowHtml}</div>
+            </div>
+          `;
+        }
+
+        // Case 2: Exactly 1 complex value (or deduplicated down to 1 value)
+        if (values.length === 1) {
+          const val = values[0];
+          return `
+            <div class="state-var-complex">
+              <div class="state-var-header" onclick="toggleStateEntry(this)">
+                <span class="entry-caret">▼</span>
+                <span class="state-var-name">${displayedName}:</span>
+              </div>
+              <div class="state-var-body">
+                <div class="val-json">${syntaxHighlightJson(val, query)}</div>
+              </div>
+            </div>
+          `;
+        }
+
+        // Case 3: Multiple distinct values with complex objects -> sequential steps separated by arrow ↓
+        return `
+          <div class="state-var-complex">
+            <div class="state-var-header" onclick="toggleStateEntry(this)">
+              <span class="entry-caret">▼</span>
+              <span class="state-var-name">${displayedName}:</span>
+            </div>
+            <div class="state-var-body">
+              ${values.map((val, idx) => `
+                ${idx > 0 ? `
+                  <div class="state-step-divider">
+                    <span class="state-arrow">↓</span>
+                  </div>
+                ` : ''}
+                <div class="val-json">${syntaxHighlightJson(val, query)}</div>
+              `).join("")}
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="val-section val-state">
+          <div class="section-header open" onclick="toggleSection(this)">
+            <span class="section-caret">▼</span>
+            <span class="section-label tag-state">State</span>
+            <span class="section-sub">Variables</span>
+          </div>
+          <div class="section-content">
+            <div class="state-vars-list">
+              ${varsHtml}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderItemNode(node, depth, query) {
+      let statesHtml = "";
+      if (node.states && node.states.length > 0) {
+        statesHtml = renderGroupedStateSection(node.states, query);
+      }
+
+      let childrenHtml = "";
+      if (node.children && node.children.length > 0) {
+        childrenHtml = node.children.map(child => renderNode(child, depth + 1, query)).join("");
+      }
+
+      return `
+        <div class="item-node">
+          <div class="item-header" onclick="toggleItemNode(this)">
+            <span class="node-caret">▼</span>
+            <span>Item ${node.index ?? 1}</span>
+          </div>
+          <div class="node-body">
+            ${statesHtml}
+            ${childrenHtml}
+          </div>
+        </div>
+      `;
+    }
+
+    // Toggle call node
+    function toggleNode(header, event) {
+      if (event) {
+        if (event.target.closest(".copy-fn-btn")) return;
+        const sel = window.getSelection();
+        if (sel && sel.toString().trim().length > 0) return;
+      }
+      const caret = header.querySelector(".node-caret");
+      const body = header.nextElementSibling;
+      const isNowCollapsed = !body.classList.contains("collapsed");
+      caret.classList.toggle("collapsed", isNowCollapsed);
+      body.classList.toggle("collapsed", isNowCollapsed);
+    }
+
+    function copyMethodName(event, name) {
+      event.stopPropagation();
+      const btn = event.currentTarget;
+      const doSuccess = () => {
+        const orig = btn.innerHTML;
+        btn.innerHTML = '✓';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.innerHTML = orig;
+          btn.classList.remove('copied');
+        }, 1500);
+      };
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(name).then(doSuccess).catch(() => {
+          fallbackCopy(name);
+          doSuccess();
+        });
+      } else {
+        fallbackCopy(name);
+        doSuccess();
+      }
+    }
+
+    function fallbackCopy(text) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+
+    // Toggle loop item node
+    function toggleItemNode(header) {
+      const caret = header.querySelector(".node-caret");
+      const body = header.nextElementSibling;
+      const isNowCollapsed = !body.classList.contains("collapsed");
+      caret.classList.toggle("collapsed", isNowCollapsed);
+      body.classList.toggle("collapsed", isNowCollapsed);
+    }
+
+    // Toggle collapsible section (In, Out, State, Error)
+    function toggleSection(header) {
+      const caret = header.querySelector(".section-caret");
+      const content = header.nextElementSibling;
+      const isNowCollapsed = !content.classList.contains("collapsed");
+      content.classList.toggle("collapsed", isNowCollapsed);
+      if (caret) caret.classList.toggle("collapsed", isNowCollapsed);
+      header.classList.toggle("open", !isNowCollapsed);
+    }
+
+    // Toggle complex state variable entry
+    function toggleStateEntry(header) {
+      const caret = header.querySelector(".entry-caret");
+      const body = header.nextElementSibling;
+      const isNowCollapsed = !body.classList.contains("collapsed");
+      body.classList.toggle("collapsed", isNowCollapsed);
+      if (caret) caret.classList.toggle("collapsed", isNowCollapsed);
+    }
+
+    function expandAllNodes() {
+      document.querySelectorAll(".node-caret, .section-caret, .entry-caret").forEach(c => c.classList.remove("collapsed"));
+      document.querySelectorAll(".node-body, .section-content, .state-var-body").forEach(b => b.classList.remove("collapsed"));
+      document.querySelectorAll(".section-header").forEach(h => h.classList.add("open"));
+    }
+
+    function collapseAllNodes() {
+      // Collapse inner sections and deeper nodes
+      document.querySelectorAll(".tree-node .tree-node .node-caret, .section-caret, .entry-caret").forEach(c => c.classList.add("collapsed"));
+      document.querySelectorAll(".tree-node .tree-node .node-body, .section-content, .state-var-body").forEach(b => b.classList.add("collapsed"));
+      document.querySelectorAll(".section-header").forEach(h => h.classList.remove("open"));
+    }
+
+    // Pure JavaScript syntax highlighter for JSON with distinct key and value styling
+    function syntaxHighlightJson(jsonObj, query) {
+      if (jsonObj === undefined || jsonObj === null) {
+        return '<span class="json-null">null</span>';
+      }
+
+      function renderPiece(raw) {
+        return query ? highlightText(raw, query) : escapeHtml(raw);
+      }
+
+      let str;
+      if (typeof jsonObj === "string") {
+        if (jsonObj === "[Truncated]" || jsonObj === "[Hidden]" || jsonObj === "[Deferred]" || jsonObj === "[Unavailable]" || jsonObj === "void" || jsonObj === "Stream") {
+          return `<span class="json-null">${renderPiece(jsonObj)}</span>`;
+        }
+        if ((jsonObj.startsWith("{") && jsonObj.endsWith("}")) || (jsonObj.startsWith("[") && jsonObj.endsWith("]"))) {
+          try {
+            const parsed = JSON.parse(jsonObj);
+            str = JSON.stringify(parsed, null, 2);
+          } catch {
+            str = JSON.stringify(jsonObj);
+          }
+        } else {
+          str = JSON.stringify(jsonObj);
+        }
+      } else {
+        try {
+          str = JSON.stringify(jsonObj, null, 2);
+        } catch {
+          str = String(jsonObj);
+        }
+      }
+
+      // Token regex matching:
+      // Group 1: strings (with optional trailing colon -> object key)
+      // Group 4: booleans & null
+      // Group 5: numbers
+      const tokenRegex = /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g;
+
+      let lastIndex = 0;
+      let result = "";
+      let match;
+
+      while ((match = tokenRegex.exec(str)) !== null) {
+        if (match.index > lastIndex) {
+          result += renderPiece(str.slice(lastIndex, match.index));
+        }
+        lastIndex = tokenRegex.lastIndex;
+
+        const token = match[0];
+        if (token.startsWith('"')) {
+          if (token.endsWith(':') || /:\s*$/.test(token)) {
+            const colonIndex = token.lastIndexOf(':');
+            const keyPart = token.slice(0, colonIndex);
+            const colonPart = token.slice(colonIndex);
+            result += `<span class="json-key">${renderPiece(keyPart)}</span><span class="json-colon">${renderPiece(colonPart)}</span>`;
+          } else {
+            result += `<span class="json-string">${renderPiece(token)}</span>`;
+          }
+        } else if (token === 'true' || token === 'false') {
+          result += `<span class="json-boolean">${renderPiece(token)}</span>`;
+        } else if (token === 'null') {
+          result += `<span class="json-null">${renderPiece(token)}</span>`;
+        } else {
+          result += `<span class="json-number">${renderPiece(token)}</span>`;
+        }
+      }
+
+      if (lastIndex < str.length) {
+        result += renderPiece(str.slice(lastIndex));
+      }
+
+      return result;
+    }
+
+    function getTypeHint(val) {
+      if (val === null || val === undefined) return "null";
+      if (Array.isArray(val)) return `Array(${val.length})`;
+      if (typeof val === "object") return `Object(${Object.keys(val).length} props)`;
+      return typeof val;
+    }
+
+    function highlightText(text, query) {
+      if (!query || text === null || text === undefined) return escapeHtml(text ?? "");
+      const str = String(text);
+      const escapedQuery = escapeRegExp(query);
+      const regex = new RegExp(escapedQuery, "gi");
+      let result = "";
+      let lastIndex = 0;
+      let match;
+      while ((match = regex.exec(str)) !== null) {
+        result += escapeHtml(str.slice(lastIndex, match.index));
+        result += `<mark>${escapeHtml(match[0])}</mark>`;
+        lastIndex = match.index + match[0].length;
+        if (regex.lastIndex === match.index) {
+          regex.lastIndex++;
+        }
+      }
+      result += escapeHtml(str.slice(lastIndex));
+      return result;
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function escapeRegExp(string) {
+      return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    // Delete single log
+    async function deleteLog(id) {
+      if (!confirm(`Delete trace ${id}?`)) return;
+      try {
+        const res = await fetch(`/debug/logs/${id}`, { method: "DELETE" });
+        if (res.ok) {
+          if (selectedTraceId === id) {
+            currentLogRequestId++;
+            selectedTraceId = null;
+            currentTraceData = null;
+            document.getElementById("detail-header").style.display = "none";
+            document.getElementById("tree-container").innerHTML = `
+              <div class="empty-placeholder">
+                <span style="font-size:32px;">📑</span>
+                <span>Select an /import or /export request from the left to view the trace</span>
+              </div>
+            `;
+          }
+          loadLogs();
+        }
+      } catch (err) {
+        console.error("Failed to delete trace", err);
+      }
+    }
+
+    // Clear all logs
+    async function clearAllLogs() {
+      if (!confirm("Are you sure you want to delete ALL trace logs?")) return;
+      try {
+        const res = await fetch("/debug/logs", { method: "DELETE" });
+        if (res.ok) {
+          currentLogRequestId++;
+          selectedTraceId = null;
+          currentTraceData = null;
+          document.getElementById("detail-header").style.display = "none";
+          document.getElementById("tree-container").innerHTML = `
+            <div class="empty-placeholder">
+              <span style="font-size:32px;">📑</span>
+              <span>All trace logs deleted</span>
+            </div>
+          `;
+          loadLogs();
+        }
+      } catch (err) {
+        console.error("Failed to clear logs", err);
+      }
+    }
+
+    // Copy JSON to clipboard
+    function copyTraceJson() {
+      if (!currentTraceData) return;
+      navigator.clipboard.writeText(JSON.stringify(currentTraceData, null, 2))
+        .then(() => alert("Trace JSON copied to clipboard!"))
+        .catch(err => console.error("Could not copy JSON", err));
+    }
+
+    // Download JSON file
+    function downloadTraceJson() {
+      if (!currentTraceData) return;
+      const blob = new Blob([JSON.stringify(currentTraceData, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${currentTraceData.id || "trace"}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+  </script>
+</body>
+</html>

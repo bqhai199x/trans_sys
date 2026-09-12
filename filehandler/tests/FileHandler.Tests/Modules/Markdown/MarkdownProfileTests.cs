@@ -5,10 +5,23 @@ using Microsoft.Extensions.Options;
 
 namespace FileHandler.Tests.Modules.Markdown;
 
+/// <summary>
+/// Acceptance and syntax parity tests for configured Markdown profile.
+/// </summary>
 public sealed class MarkdownProfileTests
 {
-    private static MarkdownService Create(FileHandlingOptions? options = null) => new(Options.Create(options ?? new()));
 
+    /// <summary>
+    /// Creates Markdown service for test.
+    /// </summary>
+    /// <param name="options">File processing limits.</param>
+    /// <returns>Configured service for testing.</returns>
+    private static MarkdownService Create(FileHandlingOptions? options = null) => MarkdownService.Create(Options.Create(options ?? new()));
+
+    /// <summary>
+    /// Verifies deterministic extraction and byte-perfect export of profile fixture.
+    /// </summary>
+    /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task FullProfileFixtureHasDeterministicIdentityRoundTrip()
     {
@@ -26,6 +39,10 @@ public sealed class MarkdownProfileTests
         Assert.Equal(bytes, exported.Content);
     }
 
+    /// <summary>
+    /// Verifies that literal markers survive translation without ID collisions.
+    /// </summary>
+    /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task LiteralProtocolMarkerIsCollisionSafe()
     {
@@ -39,6 +56,10 @@ public sealed class MarkdownProfileTests
         Assert.Equal("Read <keepme1> literally and **dịch tôi**.", Encoding.UTF8.GetString(exported.Content!));
     }
 
+    /// <summary>
+    /// Verifies rejection of invalid translation batches and marker content.
+    /// </summary>
+    /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task RejectsCountEmptyDuplicateUnexpectedAndProtectedContent()
     {
@@ -67,6 +88,10 @@ public sealed class MarkdownProfileTests
         Assert.Contains(overflow.Errors, x => x.Code == "invalid_marker_syntax");
     }
 
+    /// <summary>
+    /// Verifies rejection of heading changes when internal anchors exist.
+    /// </summary>
+    /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task RejectsHeadingChangeWhenInternalAnchorExists()
     {
@@ -80,6 +105,10 @@ public sealed class MarkdownProfileTests
         Assert.Null(exported.Content);
     }
 
+    /// <summary>
+    /// Verifies configured unit, translation, and output limits.
+    /// </summary>
+    /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task EnforcesUnitTranslationAndOutputLimits()
     {
@@ -96,6 +125,10 @@ public sealed class MarkdownProfileTests
         Assert.Equal("output_too_large", output.Errors.Single().Code);
     }
 
+    /// <summary>
+    /// Verifies that translated soft breaks retain blockquote prefixes.
+    /// </summary>
+    /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task PreservesQuotePrefixAcrossTranslatedSoftBreak()
     {
@@ -108,6 +141,10 @@ public sealed class MarkdownProfileTests
         Assert.Equal("> Dòng một\r\n> Dòng hai\r\n", Encoding.UTF8.GetString(exported.Content!));
     }
 
+    /// <summary>
+    /// Verifies rejection of translations that add Markdown blocks.
+    /// </summary>
+    /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task RejectsTranslationThatCreatesAnotherBlock()
     {
