@@ -14,6 +14,16 @@ public sealed class TraceDocument
     public int Version { get; set; } = 1;
 
     /// <summary>
+    /// Selected zero-based translation indices, or null for legacy traces.
+    /// </summary>
+    public int[]? UnitIndexes { get; set; }
+
+    /// <summary>
+    /// Selected indices not reached by this request.
+    /// </summary>
+    public int[]? MissingUnitIndexes { get; set; }
+
+    /// <summary>
     /// Unique identifier for this trace session.
     /// </summary>
     public string Id { get; set; } = string.Empty;
@@ -71,6 +81,17 @@ public sealed class TraceDocument
 /// </summary>
 public sealed class TraceNode
 {
+
+    /// <summary>
+    /// Zero-based translation index, independent of loop iteration indices.
+    /// </summary>
+    public int? UnitIndex { get; set; }
+
+    /// <summary>
+    /// Whether node is excluded from capture and publication.
+    /// </summary>
+    [JsonIgnore]
+    internal bool Excluded { get; set; }
 
     /// <summary>
     /// Node type indicator: "call" or "item".
@@ -216,6 +237,18 @@ public sealed class ToggleDebugRequest
     /// Whether debug tracing should be enabled.
     /// </summary>
     public bool Enabled { get; set; }
+}
+
+/// <summary>
+/// Runtime selection of translation units for subsequent requests.
+/// </summary>
+public sealed class DebugSettings
+{
+
+    /// <summary>
+    /// Zero-based indices in imported texts; empty selects request metadata only.
+    /// </summary>
+    public int[] UnitIndexes { get; set; } = [];
 }
 
 /// <summary>

@@ -655,6 +655,10 @@
         <span id="toggle-debug-text">Debug Mode: OFF</span>
       </button>
 
+      <label for="unit-indexes">Index câu (từ 0)</label>
+      <input id="unit-indexes" class="input-field" style="width:160px" placeholder="Ví dụ: 0, 3, 12" aria-describedby="selection-status">
+      <button class="btn" onclick="saveUnitIndexes()">Lưu index</button>
+      <span id="selection-status" role="status" style="font-size:12px">Để trống: chỉ metadata</span>
       <!-- Clear All Logs -->
       <button class="btn btn-danger" onclick="clearAllLogs()">
         <span>🗑</span> Clear All
@@ -727,9 +731,41 @@
     // Initialize application
     document.addEventListener("DOMContentLoaded", () => {
       fetchStatus();
+      fetchUnitIndexes();
       loadLogs();
       window.addEventListener("focus", () => loadLogs());
     });
+
+    async function fetchUnitIndexes() {
+      try {
+        const response = await fetch('/debug/settings');
+        if (!response.ok) throw new Error('Không đọc được lựa chọn index');
+        const settings = await response.json();
+        document.getElementById('unit-indexes').value = settings.unitIndexes.join(', ');
+      } catch (error) {
+        document.getElementById('selection-status').textContent = error.message;
+      }
+    }
+
+    async function saveUnitIndexes() {
+      const input = document.getElementById('unit-indexes');
+      const status = document.getElementById('selection-status');
+      const tokens = input.value.trim() ? input.value.split(',').map(value => value.trim()) : [];
+      if (tokens.some(value => !/^\d+$/.test(value) || Number(value) > 2147483647)) {
+        status.textContent = 'Nhập số nguyên từ 0, phân cách bằng dấu phẩy.';
+        return;
+      }
+      try {
+        const response = await fetch('/debug/settings', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ unitIndexes: tokens.map(Number) })
+        });
+        if (!response.ok) throw new Error('Không lưu được lựa chọn index');
+        const settings = await response.json();
+        input.value = settings.unitIndexes.join(', ');
+        status.textContent = settings.unitIndexes.length ? 'Đã lưu cho request tiếp theo' : 'Chỉ ghi metadata request';
+      } catch (error) { status.textContent = error.message; }
+    }
 
     // Fetch Debug Status
     async function fetchStatus() {
@@ -948,7 +984,8 @@
       }
 
       const html = calls.map(rootCall => renderNode(rootCall, 0, query)).join("");
-      treeContainer.innerHTML = html;
+      const selection = trace.unitIndexes ? `<div style="padding:12px">Index đã chọn: ${escapeHtml(trace.unitIndexes.join(', ') || 'không có (chỉ metadata)')}${trace.missingUnitIndexes?.length ? ` — Chưa tìm thấy hoặc chưa xử lý: ${escapeHtml(trace.missingUnitIndexes.join(', '))}` : ''}</div>` : '';
+      treeContainer.innerHTML = selection + html;
     }
 
     function renderNode(node, depth, query) {
@@ -1164,7 +1201,7 @@
         <div class="item-node">
           <div class="item-header" onclick="toggleItemNode(this)">
             <span class="node-caret">▼</span>
-            <span>Item ${node.index ?? 1}</span>
+            <span>${node.unitIndex != null ? `Câu index ${node.unitIndex} · ${escapeHtml(node.target || '')}` : `Item ${node.index ?? 1}`}</span>
           </div>
           <div class="node-body">
             ${statesHtml}

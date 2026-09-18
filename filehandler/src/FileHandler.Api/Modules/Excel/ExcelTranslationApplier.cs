@@ -46,7 +46,7 @@ public sealed class ExcelTranslationApplier
                 var unit = plan.Units[i];
                 var decoded = decodedUnits[i];
 
-                using var unitItem = DebugTrace.Item(i + 1);
+                using var unitItem = DebugTrace.Unit(i, "prepare");
 
                 if (OfficeTextBindings.Changed(unit, decoded))
                 {
@@ -131,7 +131,8 @@ public sealed class ExcelTranslationApplier
                 var unit = patch.Plan.Units[i];
                 var decoded = patch.DecodedUnits[i];
 
-                using var unitItem = DebugTrace.Item(i + 1);
+                using var unitItem = DebugTrace.Unit(i, "apply");
+                unitItem.State("changed", () => OfficeTextBindings.Changed(unit, decoded));
 
                 if (!OfficeTextBindings.Changed(unit, decoded)) continue;
                 if (drawingParts.TryGetValue(unit.Location.PartUri, out var drawing))
@@ -167,6 +168,7 @@ public sealed class ExcelTranslationApplier
                         edits.Add(OfficeTextBindings.Key(OfficeTextBindings.Path(cell.CellValue!)), new(
                             Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(cell.CellValue!.Text))), newIndex.ToString()));
                         cell.CellValue = new CellValue(newIndex.ToString());
+                        unitItem.State("sharedString", () => new { cellRef, newIndex, xml = clone.OuterXml });
                         sstModified = true;
                         touchedParts.Add(unit.Location.PartUri);
                     }

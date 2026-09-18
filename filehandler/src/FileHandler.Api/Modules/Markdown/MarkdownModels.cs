@@ -84,7 +84,14 @@ internal enum MarkerKind
 /// <param name="Kind">Marker&apos;s preservation behavior.</param>
 /// <param name="OpenSource">Source restored at opening marker.</param>
 /// <param name="CloseSource">Source restored at closing marker.</param>
-internal sealed record MarkerDefinition(int Id, MarkerKind Kind, string OpenSource, string CloseSource);
+internal sealed record MarkerDefinition(int Id, MarkerKind Kind, string OpenSource, string CloseSource)
+{
+
+    /// <summary>
+    /// Whether empty emphasis delimiters can be omitted during restoration.
+    /// </summary>
+    public bool IsEmphasis { get; init; }
+}
 
 /// <summary>
 /// Translatable source span with preservation metadata.
@@ -98,7 +105,14 @@ internal sealed record MarkerDefinition(int Id, MarkerKind Kind, string OpenSour
 /// <param name="NewlineReplacement">Source newline sequence and any required prefix.</param>
 /// <param name="HasSoftBreak">Whether unit contains soft line break.</param>
 /// <param name="TokenTemplate">Public run and anchor mapping, when extracted from Markdown.</param>
-internal sealed record MarkdownUnit(int Start, int End, string Text, IReadOnlyDictionary<int, MarkerDefinition> Markers, SourceLineRange Line, bool IsHeading, string NewlineReplacement, bool HasSoftBreak, MarkdownTokenTemplate? TokenTemplate = null);
+internal sealed record MarkdownUnit(int Start, int End, string Text, IReadOnlyDictionary<int, MarkerDefinition> Markers, SourceLineRange Line, bool IsHeading, string NewlineReplacement, bool HasSoftBreak, MarkdownTokenTemplate? TokenTemplate = null)
+{
+
+    /// <summary>
+    /// Whether translated text requires Mermaid label encoding instead of Markdown escaping.
+    /// </summary>
+    public bool IsMermaidLabel { get; init; }
+}
 
 /// <summary>
 /// Extracted units and document validation metadata.
@@ -112,8 +126,8 @@ internal sealed record MarkdownExtraction(MarkdownSource Source, IReadOnlyList<M
 /// <summary>
 /// Encoded inline text and its original source span.
 /// </summary>
-/// <param name="Text">Text with preservation markers.</param>
+/// <param name="Tokens">Typed text and syntax bindings without serialized markers.</param>
 /// <param name="Start">Inclusive start character offset.</param>
 /// <param name="End">Exclusive end character offset.</param>
 /// <param name="Markers">Marker definitions keyed by ID.</param>
-internal sealed record EncodedInline(string Text, int Start, int End, IReadOnlyDictionary<int, MarkerDefinition> Markers);
+internal sealed record EncodedInline(IReadOnlyList<MarkerToken> Tokens, int Start, int End, IReadOnlyDictionary<int, MarkerDefinition> Markers);

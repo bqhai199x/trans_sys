@@ -26,6 +26,10 @@ dotnet run --project src/FileHandler.Api
 
 Có thể bật/tắt realtime ngay trên trang `/debug` hoặc qua API `POST /debug/toggle`.
 
+Nhập **Index câu (từ 0)** trên `/debug`, ví dụ `0, 3, 12`, rồi bấm **Lưu index** trước khi gửi lại import/export. Index là vị trí trong array JSON do import trả về, trùng `errors[].index`; không phải số token, slide, sheet hay dòng. Lựa chọn áp dụng cho mọi request tiếp theo trong tiến trình hiện tại, mất khi restart. `DebugTrace.UnitIndexes` trong cấu hình cung cấp giá trị mặc định (mặc định `[]`). Request đang chạy giữ bản chụp cấu hình lúc bắt đầu.
+
+`GET /debug/settings` trả `{ "unitIndexes": [...] }`; `PUT /debug/settings` nhận cùng cấu trúc, loại trùng và sắp xếp index. Số âm hoặc danh sách null bị từ chối. Danh sách rỗng chỉ ghi metadata, stage và kết quả request. Index không có hoặc chưa được xử lý xuất hiện trong `missingUnitIndexes`; không tự bật ghi toàn bộ tài liệu.
+
 Mỗi HTTP request tạo một file JSON có cấu trúc cây lồng nhau theo luồng gọi hàm trong `logs/debug/`, tính từ content root của API. Tên file gồm giờ UTC và ID ngẫu nhiên.
 
 Các file log được lưu trong thư mục `logs/debug/` và có thể xem trực quan trên trang `/debug`.
@@ -62,19 +66,17 @@ catch (Exception error)
 }
 ```
 
-Đặt `State` ở nơi giá trị vừa thay đổi hoặc quyết định xử lý vừa được xác định; dùng tên camelCase có nghĩa và giữ cùng tên khi cần xem chuỗi thay đổi. `stage` được ghi **trước** mỗi bước service để chỉ bước đã bắt đầu; lỗi hoặc cancellation giữ lại bước cuối, không có nghĩa bước đó đã thành công. Đầu vào/giá trị trả về đã nằm ở `In`/`Out`, không cần chụp lại toàn bộ bằng state.
+Đặt `State` ở nơi giá trị vừa thay đổi hoặc quyết định xử lý vừa được xác định; dùng tên camelCase có nghĩa. `stage` được ghi **trước** mỗi bước service: lỗi hoặc cancellation giữ lại bước cuối, không có nghĩa bước đó đã thành công. Trace mới không capture `In`/`Out` tổng quát vì các giá trị này có thể chứa cả tài liệu hoặc toàn bộ bản dịch. Ghi dữ liệu riêng của câu bằng snapshot tường minh trong scope `DebugTrace.Unit(index, phase)`.
 
-- Controller ghi `fileType` sau khi nhận diện thành công, nguồn `translationInput`, tiến trình `parseMode` và JSON sau chuẩn hóa newline.
-- Reader ghi `bytesRead` trước khi trả lỗi kích thước hoặc decode; `hasBom` có sẵn cả khi UTF-8 lỗi. Số byte lúc vượt giới hạn là lượng đã đọc đến khi phát hiện lỗi, có thể chưa phải toàn bộ file.
-- Markdown mở `Item` trước khi xử lý từng leaf block đủ điều kiện. `Item.index` là thứ tự block được xét (từ 1), `unitIndex` là chỉ số unit được trích xuất (từ 0); block không có chữ cần dịch có `outcome: noTranslatableText` và không có `unitIndex`.
-- Buffer trước/sau chỉ ghi tại `EncodeInline`, gồm text và số marker; snapshot cuối vẫn giữ buffer dở dang khi lỗi. Hàm tạo marker ghi riêng `marker` ngay sau khi đăng ký. Export ghi `tokens` trước/sau chuẩn hóa, quyết định từng unit, patch sau khi áp dụng và signature trước/sau kiểm tra cấu trúc.
-- TXT ghi span/line khi chốt đoạn, quyết định identity/thay thế và chuỗi `outputBytes` gồm BOM, separator, bản dịch trước khi kiểm tra giới hạn. `unitIndex` khi vượt byte limit chỉ unit gây dừng; vượt ở separator cuối chỉ có tổng byte.
+- `unitIndex` luôn bắt đầu từ 0 và chỉ đơn vị dịch thực tế. Block chỉ có code hoặc không có text cần dịch không chiếm index. Scope vòng lặp slide/sheet độc lập với scope đơn vị dịch.
+- Office ghi text span, XML thuộc tính run, fingerprint, quyết định gộp/tách, token/anchor, binding, đầu vào dịch, kết quả decode, lỗi và scalar được thay thế. Anchor dùng metadata/hash để không chụp nhầm text box có index khác. Excel ghi XML rich text của ô kể cả khi tái sử dụng template shared string.
+- Markdown ghi buffer, marker, token, bản dịch và vùng thay thế của câu được chọn; không ghi toàn bộ AST, source hay buffer đầu ra tài liệu. TXT ghi source span/line, bản dịch và quyết định giữ nguyên/thay thế.
 
-Mọi phép dựng snapshot phải nằm trong lambda `State(..., () => ...)` để giữ cơ chế bỏ qua khi tracing tắt, ẩn nội dung hoặc hết quota. Không tạo state theo từng ký tự hay chụp lặp toàn bộ buffer/dictionary ở các tầng helper.
+Mọi phép dựng snapshot phải nằm trong lambda `State(..., () => ...)` để không chạy khi tracing tắt, ẩn nội dung hoặc index không được chọn. Snapshot trong scope unit chỉ được chứa dữ liệu của unit đó, không truyền stream, AST hoặc cây OpenXML vào serializer.
 
-`CaptureContent: true` ghi nội dung nguồn/bản dịch; đặt `false` để chỉ theo dõi luồng với giá trị `[Hidden]` (và `[Redacted]` cho thông báo lỗi). Object/AST được chụp theo các trường dữ liệu; stream không bị đọc thêm và lazy enumerable không bị thực thi (`[Deferred]`). Mỗi snapshot tối đa 20 phần tử/collection và có giới hạn độ sâu. `MaxValueLength` mặc định 1000 ký tự; phần bị cắt ghi `[Truncated]`. Log xuất cấu trúc cây JSON chuẩn gồm `calls`, `states`, `in`, `out`, `error`, `durationMs`. `MaxEvents` mặc định 10000 sự kiện/request; khi chạm ngưỡng, log ghi `[Truncated - MaxEvents reached]` và dừng chi tiết nhưng vẫn ghi `Result` khi hoàn tất.
+`CaptureContent: true` ghi đầy đủ nội dung câu được chọn; đặt `false` để ẩn snapshot bằng `[Hidden]` và thông báo lỗi bằng `[Redacted]`. Trace theo index không áp dụng cắt chuỗi/collection hoặc các trần `MaxValueLength`, `MaxEvents`, `MaxTraceBytes` của trace cũ. Những cấu hình này chỉ còn dùng cho session nội bộ kiểu cũ. Lọc index diễn ra trước khi dựng snapshot, không ghi full rồi mới lọc file.
 
-Middleware serialize và flush bất đồng bộ khi kết thúc request. `MaxTraceBytes` mặc định 4 MiB (cấu hình được giới hạn trong 4 KiB–64 MiB) chặn cả capture và file JSON; khi vượt mức serialize, ghi bản tóm tắt JSON hợp lệ. Log mới có `version: 1`; danh sách không lọc nội dung chỉ đọc metadata, còn log cũ và tìm kiếm nội dung dùng đường đọc đầy đủ. Tắt `Enabled` để ngừng tạo file cho request mới; request đang chạy giữ cấu hình ban đầu. Lỗi ghi trace không làm thay đổi kết quả API. Thư mục `logs/` được Git bỏ qua; file cũ chưa tự động xóa, cần chính sách retention bên ngoài hoặc xóa qua `/debug`.
+Middleware serialize và flush bất đồng bộ khi kết thúc request. Log mới có `version: 2`, `unitIndexes`, `missingUnitIndexes` và `unitIndex` trên các node liên quan; viewer vẫn đọc log cũ. Tắt `Enabled` để ngừng tạo file cho request mới. Lỗi ghi trace không làm thay đổi kết quả API. Thư mục `logs/` được Git bỏ qua; file cũ chưa tự động xóa, có thể xóa qua `/debug`.
 
 ```bash
 curl -F "file=@guide.md" http://localhost:5000/import
@@ -84,6 +86,10 @@ curl -OJ -F "file=@guide.md" -F 'translatedTexts=["Bắt đầu nhanh"]' http://
 Thành công import trả array JSON thuần. Thành công export trả `text/markdown; charset=utf-8` cho `.md`, `text/plain; charset=utf-8` cho `.txt`, hoặc MIME tương ứng cho Office (`.docx`, `.xlsx`, `.pptx`) với attachment. Chọn handler bằng extension cuối, không phân biệt hoa thường, không dựa vào MIME client gửi. Mọi lỗi trả array gồm `code`, `message` và các field định vị nếu có. HTTP 400 dùng cho multipart/JSON sai; 413 cho giới hạn tài nguyên; 415 cho extension ngoài `.md`/`.txt`/`.docx`/`.xlsx`/`.pptx` hoặc Content-Type request không được hỗ trợ; 422 cho UTF-8, count, nội dung bản dịch, marker/token hoặc mapping sai; 500 cho lỗi ngoài dự kiến. Reverse proxy có thể chặn request trước ứng dụng nên response của proxy không được ứng dụng chuẩn hóa.
 
 ## Token thống nhất Markdown và Office
+
+Run chỉ chứa dấu cách được gộp vào text liền trước khi cùng định dạng và cùng ngữ cảnh sở hữu. Ví dụ `[.NET] [ ] [Framework/JAVA] [換装について]` trở thành `.NET Framework/JAVA換装について`, giữ nguyên dấu cách. Khoảng trắng khác style hoặc chưa có text liền trước vẫn được bảo vệ; tab và xuống dòng vẫn giữ ranh giới hiện có.
+
+Office gộp các run liền nhau khi định dạng trực tiếp tương đương, bỏ khác biệt ngôn ngữ và metadata kiểm tra chính tả. Ví dụ sáu run `2026`, `年`, `3`, `月`, `31`, `日` cùng style được import thành `2026年3月31日` (Plain), không tự thêm khoảng trắng. Khác font, màu, đậm/nghiêng hoặc ranh giới hyperlink/anchor vẫn được giữ. Với shape PowerPoint không có placeholder hoặc style reference, phép so sánh áp dụng mặc định từ presentation, slide master, text body và paragraph trước định dạng run; thuộc tính mặc định ghi tường minh không tạo token riêng. Các ngữ cảnh khác chưa giải toàn bộ style kế thừa/theme. Sau cập nhật này cần import lại nguồn trước khi dịch/export; không tái sử dụng bản dịch theo cách chia token cũ.
 
 Sau cập nhật hardening, client phải import lại nguồn trước khi export: soft break Markdown, whitespace và ký tự điều khiển Office được bảo vệ bằng token `k`; giữ nguyên thứ tự token `r/k`. Không tái sử dụng array dịch từ phiên bản template cũ. Office từ chối bound/locked SDT, markup compatibility không được hỗ trợ và complex field xuyên paragraph; nội dung cached field được bảo vệ.
 
@@ -95,9 +101,11 @@ Ví dụ nguồn Markdown gồm Before, chữ red in đậm, after và inline co
 <ox:r0>Before </ox:r0><ox:r1>red</ox:r1><ox:r2> after </ox:r2><ox:k0/>
 ```
 
-Dịch nội dung trong r, giữ nguyên IDs/thứ tự/token. Các span chỉ có whitespace được giữ bằng k nếu nằm riêng giữa các cấu trúc. Trong Structured, backslash encode thành hai backslash và `<` encode thành backslash + `<`; không tự xóa escape. Plain/TXT giữ literal, không diễn giải token. Markdown vẫn escape ký tự Markdown và bảo toàn cấu trúc nguồn khi export. Mỗi r-slot không được rỗng/chỉ whitespace; lỗi trả `invalid_marker_syntax` hoặc `empty_translation` với index/line của unit.
+Dịch nội dung trong r, giữ nguyên IDs/thứ tự/token. Các span chỉ có whitespace được giữ bằng k nếu nằm riêng giữa các cấu trúc. Trong Structured, backslash encode thành hai backslash và `<` encode thành backslash + `<`; không tự xóa escape. Plain/TXT giữ literal, không diễn giải token. Office và Markdown cho phép r-slot riêng lẻ rỗng/chỉ whitespace khi ít nhất một slot trong unit còn nội dung; vẫn phải giữ đủ thẻ và đúng thứ tự. Nếu toàn bộ slot rỗng/chỉ whitespace, trả `empty_translation` với index của unit. Markdown vẫn escape ký tự Markdown và kiểm tra cấu trúc khi export; dấu định dạng nhấn mạnh bao quanh vùng đã rỗng được bỏ để tránh tạo dấu `**`/`*` thừa, còn link, code và anchor vẫn được bảo vệ.
 
-**Đổi contract Markdown:** Public import không còn phát `<keepme...>`. Hãy import lại file nguồn trước khi dịch/export theo phiên bản mới; không gửi lại array token cũ. Marker nội bộ vẫn phục vụ restoration của parser Markdown, không là format trao đổi API. Token builders/escaping dùng chung tại `Common/TranslationTokenSyntax.cs`, không khiến Markdown phụ thuộc module Office.
+**Đổi contract Markdown:** Public import dùng token `ox`. Extract/restore dùng binding có kiểu dữ liệu, không tạo rồi parse lại chuỗi `<keepme...>`; trace import/export không còn marker keepme do hệ thống sinh ra. Nội dung keepme có sẵn trong file nguồn vẫn là dữ liệu nguồn. Các đoạn liền nhau cùng định dạng và cùng phạm vi sở hữu được gộp, kể cả Nhật/Latin xen kẽ hoặc `**Track**__2__`; link khác nhau và anchor vẫn giữ ranh giới. Hãy import lại file nguồn trước khi dịch/export theo phiên bản mới; không gửi lại array token cũ. Token builders/escaping dùng chung tại `Common/TranslationTokenSyntax.cs`, không khiến Markdown phụ thuộc module Office.
+
+**Mermaid flowchart trong Markdown:** Fence `mermaid` mở đầu bằng `flowchart` hoặc `graph` và hướng `LR/RL/TB/TD/BT` được extract nhãn node dạng shape cổ điển và nhãn cạnh `-->|text|`, `-- text -->`, `-. text .->`, `== text ==>`. Mỗi nhãn một dòng là một unit Plain, có index và dòng nguồn riêng; ID, mũi tên, delimiter, comment và cấu hình giữ nguyên. Export đặt nhãn trong dấu nháy và dùng [entity của Mermaid](https://mermaid.js.org/syntax/flowchart.html#entity-codes-to-escape-characters) cho ký tự đặc biệt, không dùng escape Markdown. Identity export giữ nguyên byte nguồn; bản dịch nhãn rỗng hoặc có ký tự điều khiển bị từ chối. Code block thông thường, loại sơ đồ khác, metadata shape `@{...}`, nhãn HTML/Markdown strings và nhãn nhiều dòng chưa được extract. Sau cập nhật cần import lại vì các nhãn flowchart bổ sung unit vào thứ tự văn bản.
 
 **Tên tải xuống:** `guide.md`, `Guide.TXT`, `Report.DOCX`, `Budget.xlsx`, `Deck.pptx` giữ nguyên tên khi export; đường dẫn client bị loại, không thêm hậu tố. Nếu tên gốc đã là `already.translated.md` thì giữ nguyên tên đó. Tên thiếu dùng `document.{ext}`; nội dung MIME và loại file không đổi.
 

@@ -194,16 +194,18 @@ public sealed class ExcelExtractor : IExcelExtractor
                         }
                         else if (cell.DataType?.Value == CellValues.InlineString) payload = cell.InlineString;
                         if (payload is null) continue;
+                        using var unitTrace = DebugTrace.Unit(units.Count, "extract");
+                        unitTrace.State("richTextXml", () => payload.OuterXml);
                         if (!templates.TryGetValue(payload, out var cached))
                         {
                             var cellText = payload.InnerText;
-                            if (string.IsNullOrWhiteSpace(cellText)) continue;
+                            if (string.IsNullOrWhiteSpace(cellText)) { unitTrace.Discard(); continue; }
                             if (payload.Descendants<S.PhoneticRun>().Any() || payload.Descendants<S.PhoneticProperties>().Any())
                                 throw new InvalidOperationException("Phonetic strings are unsupported.");
                             var builder = new OfficeTemplateBuilder(_options);
                             foreach (var text in payload.Descendants<S.Text>())
                                 builder.Text(text, shared ? "/" + sstPart!.Uri.ToString().TrimStart('/') : partUri,
-                                    text.Parent is S.Run run ? run.RunProperties?.OuterXml ?? "" : "");
+                                    text.Parent is S.Run run ? OfficeStyleFingerprint.Create(run.RunProperties) : "");
                             var built = builder.Build()!;
                             cached = (built, _codec.Encode(built), Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(cellText))));
                             if (shared) templates.Add(payload, cached);
@@ -243,7 +245,9 @@ public sealed class ExcelExtractor : IExcelExtractor
                     foreach (var p in worksheetPart.DrawingsPart.WorksheetDrawing.Descendants<A.Paragraph>())
                     {
                         paraOrdinal++;
+                        using var unitTrace = DebugTrace.Unit(units.Count, "extract");
                         var template = DrawingTextCodec.ReadParagraph(p, drawingLoc, paraOrdinal, _options);
+                        if (template is null) unitTrace.Discard();
                         if (template is not null)
                         {
                             var unitId = OfficeIdentity.CreateUnitId(

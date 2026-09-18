@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using DocumentFormat.OpenXml;
+using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Office;
 
@@ -88,7 +89,7 @@ internal sealed class OfficeTemplateBuilder
     }
 
     /// <summary>
-    /// Appends a translatable span without absorbing protected control characters.
+    /// Appends text and same-style spaces without absorbing protected control characters.
     /// </summary>
     /// <param name="node">Complete source scalar.</param>
     /// <param name="partUri">Containing part URI.</param>
@@ -102,13 +103,14 @@ internal sealed class OfficeTemplateBuilder
         var value = node.Text.Substring(offset, length);
         _characters += length;
         if (_characters > _limits.MaxPlanChars) throw new FileHandler.Api.Common.FileLimitException("office_plan_limit_exceeded");
-        if (string.IsNullOrWhiteSpace(value))
+        var canMerge = _merge && _slots[^1].FormatFingerprint == fingerprint;
+        if (string.IsNullOrWhiteSpace(value) && (!canMerge || value.IndexOfAny(['\r', '\n', '\t']) >= 0))
         {
             Anchor(node, AnchorKind.Whitespace);
             return;
         }
         string slotId;
-        if (_merge && _slots[^1].FormatFingerprint == fingerprint)
+        if (canMerge)
         {
             var previous = _slots[^1];
             slotId = previous.SlotId;
@@ -123,6 +125,14 @@ internal sealed class OfficeTemplateBuilder
             _order.Add(slotId);
         }
         _merge = true;
+        DebugTrace.Current?.State("textSpan", () => new
+        {
+            text = value, offset, length, slotId, fingerprint,
+            properties = node.Parent?.GetFirstChild<DocumentFormat.OpenXml.Wordprocessing.RunProperties>()?.OuterXml ??
+                node.Parent?.GetFirstChild<DocumentFormat.OpenXml.Drawing.RunProperties>()?.OuterXml ??
+                node.Parent?.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.RunProperties>()?.OuterXml,
+            decision = _texts[^1].Length == value.Length ? "newSlot" : "merged"
+        });
         if (!_scalarHashes.TryGetValue(node, out var sourceHash))
             _scalarHashes[node] = sourceHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(node.Text)));
         if (_bindings.Count >= _limits.MaxBindings) throw new FileHandler.Api.Common.FileLimitException("office_plan_limit_exceeded");
@@ -145,6 +155,7 @@ internal sealed class OfficeTemplateBuilder
         _anchors.Add(new(id, kind, sourceHash));
         _order.Add(id);
         _merge = false;
+        DebugTrace.Current?.State("anchor", () => new { id, kind, sourceHash });
     }
 
     /// <summary>

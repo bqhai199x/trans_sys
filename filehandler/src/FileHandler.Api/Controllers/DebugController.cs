@@ -90,6 +90,30 @@ public sealed class DebugController : ControllerBase
     }
 
     /// <summary>
+    /// Returns selected zero-based translation indices for subsequent requests.
+    /// </summary>
+    /// <returns>Current runtime selection.</returns>
+    [HttpGet("settings")]
+    public IActionResult GetSettings() => Ok(new DebugSettings
+    {
+        UnitIndexes = DebugTrace.UnitIndexesOverride ?? _options.CurrentValue.UnitIndexes ?? []
+    });
+
+    /// <summary>
+    /// Replaces runtime selection without changing active requests.
+    /// </summary>
+    /// <param name="request">Zero-based indices to capture completely.</param>
+    /// <returns>Normalized selection, or validation error for invalid indices.</returns>
+    [HttpPut("settings")]
+    public IActionResult UpdateSettings([FromBody] DebugSettings request)
+    {
+        if (request.UnitIndexes is null || request.UnitIndexes.Any(i => i < 0))
+            return BadRequest(new { error = "unitIndexes must contain nonnegative integers." });
+        DebugTrace.UnitIndexesOverride = request.UnitIndexes;
+        return GetSettings();
+    }
+
+    /// <summary>
     /// Lists stored trace log summaries with optional search and function filtering.
     /// </summary>
     /// <param name="search">Optional extracted text or content search term.</param>

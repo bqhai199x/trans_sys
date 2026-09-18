@@ -154,7 +154,12 @@ public sealed class OfficeTextCodec
                 var unit = units[i];
                 var rawText = texts[i];
 
-                using var item = DebugTrace.Item(i + 1);
+                using var item = DebugTrace.Unit(i, "decode", () => new
+                {
+                    errors = errors.Where(e => e.Index == i).ToArray(),
+                    decoded = decodedUnits.LastOrDefault(d => d.Index == i)
+                });
+                item.State("source", () => unit);
                 item.State("encodedInput", () => rawText);
 
                 if (rawText is null)
@@ -408,12 +413,6 @@ public sealed class OfficeTextCodec
                 }
 
                 var slotText = slotContentSb.ToString();
-                if (string.IsNullOrWhiteSpace(slotText))
-                {
-                    error = new FileError("empty_translation", $"Slot {tagName} không được để trống hoặc chỉ chứa khoảng trắng.") { Index = unitIndex, Marker = tagName };
-                    return false;
-                }
-
                 if (format != OfficeFormat.Excel && (slotText.Contains('\r') || slotText.Contains('\n') || slotText.Contains('\t')))
                 {
                     error = new FileError("invalid_translation", $"Slot {tagName} chứa ký tự xuống dòng hoặc tab không được phép trong Word/PowerPoint.") { Index = unitIndex, Marker = tagName };
@@ -444,6 +443,12 @@ public sealed class OfficeTextCodec
         if (expectedSlotIndex != unit.Slots.Count || expectedAnchorIndex != unit.Anchors.Count)
         {
             error = new FileError("office_token_mismatch", "Số lượng hoặc thứ tự token không khớp với mẫu gốc của đơn vị dịch.") { Index = unitIndex };
+            return false;
+        }
+
+        if (slots.All(string.IsNullOrWhiteSpace))
+        {
+            error = new FileError("empty_translation", "Đơn vị dịch phải có nội dung trong ít nhất một slot.") { Index = unitIndex };
             return false;
         }
 

@@ -26,10 +26,11 @@ public static class DrawingTextCodec
         OfficeProcessingOptions? limits = null)
     {
         var builder = new OfficeTemplateBuilder(limits);
+        var defaults = DrawingStyleContext.Resolve(paragraph);
         foreach (var child in paragraph.ChildElements)
         {
             if (child is A.Run run && run.GetFirstChild<A.Text>() is { } text)
-                builder.Text(text, parentLocation.PartUri, run.RunProperties?.OuterXml ?? "");
+                builder.Text(text, parentLocation.PartUri, DrawingStyleContext.Fingerprint(run.RunProperties, defaults));
             else if (child is A.Break)
                 builder.Anchor(child, AnchorKind.Break);
             else if (child is A.Field)

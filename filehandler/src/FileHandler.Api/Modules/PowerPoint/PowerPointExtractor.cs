@@ -172,7 +172,9 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
                 foreach (var p in textBody.Elements<A.Paragraph>())
                 {
                     paraOrdinal++;
+                    using var unitTrace = DebugTrace.Unit(units.Count, "extract");
                     var template = DrawingTextCodec.ReadParagraph(p, shapeLoc, paraOrdinal, _options);
+                    if (template is null) unitTrace.Discard();
                     if (template is not null)
                     {
                         var unitId = OfficeIdentity.CreateUnitId(

@@ -48,7 +48,7 @@ public sealed class TraceStatePlacementTests
     }
 
     /// <summary>
-    /// Verifies extraction work belongs to its block and buffers preserve before/after snapshots.
+    /// Verifies extraction work belongs to actual units and buffers preserve before/after snapshots.
     /// </summary>
     /// <returns>Task representing trace assertions.</returns>
     [Fact]
@@ -64,17 +64,16 @@ public sealed class TraceStatePlacementTests
         });
         var extract = Call(log, "MarkdownExtractor.Extract");
         var items = extract.GetProperty("children").EnumerateArray().Where(x => x.GetProperty("type").GetString() == "item").ToArray();
-        Assert.Equal(new[] { 1, 2, 3 }, items.Select(x => x.GetProperty("index").GetInt32()));
+        Assert.Equal(new[] { 0, 1 }, items.Select(x => x.GetProperty("unitIndex").GetInt32()));
         Assert.All(items, item => Assert.Contains(Nodes(item), x => Target(x) == "MarkdownExtractor.EncodeContainer"));
-        Assert.Equal("noTranslatableText", Assert.Single(States(items[1], "outcome")).GetString());
-        Assert.Empty(States(items[1], "unitIndex"));
-        Assert.Equal(1, Assert.Single(States(items[2], "unitIndex")).GetInt32());
+        Assert.Equal(1, Assert.Single(States(items[1], "unitIndex")).GetInt32());
         Assert.Equal(2, Assert.Single(States(extract, "unitCount")).GetInt32());
         var literal = Nodes(items[0]).First(x => Target(x) == "MarkdownExtractor.EncodeInline");
         var buffers = States(literal, "buffer");
         Assert.Equal(2, buffers.Length);
-        Assert.Equal("", buffers[0].GetProperty("text").GetString());
-        Assert.Equal("Hello ", buffers[1].GetProperty("text").GetString());
+        Assert.Empty(buffers[0].GetProperty("text").EnumerateArray());
+        Assert.Equal("Hello ", Assert.Single(buffers[1].GetProperty("text").EnumerateArray()).GetProperty("value").GetString());
+        Assert.DoesNotContain("keepme", log.GetRawText());
         Assert.All(Nodes(extract).Where(x => Target(x) != "MarkdownExtractor.EncodeInline"), node => Assert.Empty(States(node, "buffer")));
         var marker = Assert.Single(States(Call(log, "MarkdownExtractor.AddFormatting"), "marker"));
         Assert.Equal("*", marker.GetProperty("openSource").GetString());
@@ -96,7 +95,7 @@ public sealed class TraceStatePlacementTests
             Assert.Equal("# Title\n\nMột\n\nHai", Encoding.UTF8.GetString(result.Content!));
         });
         var apply = Call(log, "MarkdownTranslationApplier.Apply");
-        var items = apply.GetProperty("children").EnumerateArray().Where(x => x.GetProperty("type").GetString() == "item").ToArray();
+        var items = apply.GetProperty("children").EnumerateArray().Where(x => x.GetProperty("type").GetString() == "item" && Target(x) == "decode").ToArray();
         Assert.Equal(new[] { "unchanged", "replacementQueued", "replacementQueued" }, items.Select(x => Assert.Single(States(x, "outcome")).GetString()));
         var patches = States(apply, "patch");
         Assert.Equal(2, patches.Length);
@@ -128,6 +127,7 @@ public sealed class TraceStatePlacementTests
         Assert.Equal(" Bonjour ", tokens[0][1].GetProperty("value").GetString());
         Assert.False(tokens[1][0].GetProperty("isMarker").GetBoolean());
         Assert.Equal("Bonjour", tokens[1][2].GetProperty("value").GetString());
+        Assert.DoesNotContain("keepme", log.GetRawText());
         var signatures = States(Call(log, "MarkdownExtractor.ValidateStructure"), "signature");
         Assert.Equal(2, signatures.Length);
         Assert.Equal(signatures[0].GetRawText(), signatures[1].GetRawText());

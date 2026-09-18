@@ -32,6 +32,11 @@ public sealed class DebugTraceOptions
     public int MaxValueLength { get; set; } = 1000;
 
     /// <summary>
+    /// Zero-based translation indices; null supports legacy internal trace sessions.
+    /// </summary>
+    public int[]? UnitIndexes { get; set; }
+
+    /// <summary>
     /// Maximum number of trace events per request.
     /// </summary>
     public int MaxEvents { get; set; } = 10000;

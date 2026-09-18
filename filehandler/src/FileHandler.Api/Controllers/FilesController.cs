@@ -99,6 +99,8 @@ public sealed class FilesController : ControllerBase
 
             await using var stream = request.File!.OpenReadStream();
             var result = await GetHandler(fileType).ImportAsync(stream, cancellationToken);
+            trace.State("outcome", () => result.Errors.Count == 0 ? "success" : "failed");
+            trace.State("unitCount", () => result.Texts.Count);
             return result.Errors.Count == 0 ? Ok(result.Texts) : ErrorResult(result.Errors);
         });
 
@@ -138,6 +140,8 @@ public sealed class FilesController : ControllerBase
 
             await using var stream = request.File!.OpenReadStream();
             var result = await GetHandler(fileType).ExportAsync(stream, translations!, cancellationToken);
+            trace.State("outcome", () => result.Errors.Count == 0 ? "success" : "failed");
+            trace.State("outputBytes", () => result.Content?.Length ?? 0);
             return result.Errors.Count == 0
                 ? File(result.Content!, result.ContentType, FileTypeDetector.GetTranslatedFileName(request.File.FileName, fileType))
                 : ErrorResult(result.Errors);
@@ -154,6 +158,7 @@ public sealed class FilesController : ControllerBase
         fileType = default;
         if (file is null)
             return BadRequest(Errors("missing_file", "Field file là bắt buộc."));
+        if (DebugTrace.Current is { } scope) scope.Session.Document.FileName = file.FileName;
         if (!FileTypeDetector.TryDetect(file.FileName, out fileType))
             return StatusCode(415, Errors("unsupported_file_type", "Chỉ hỗ trợ tệp .md, .txt, .docx, .xlsx và .pptx."));
         return null;
@@ -383,8 +388,14 @@ public sealed class FilesController : ControllerBase
     /// <param name="errors">File validation errors.</param>
     /// <returns>HTTP response containing validation errors.</returns>
     private IActionResult ErrorResult(IReadOnlyList<FileError> errors) =>
-        DebugTrace.Trace("FilesController", "ErrorResult", () => new { errors }, _ =>
+        DebugTrace.Trace("FilesController", "ErrorResult", () => new { errors }, trace =>
         {
+            trace.State("errorCodes", () => errors.Select(e => e.Code).Distinct().ToArray());
+            foreach (var group in errors.Where(e => e.Index.HasValue).GroupBy(e => e.Index!.Value))
+            {
+                using var unitTrace = DebugTrace.Unit(group.Key, "error");
+                unitTrace.State("errors", () => group.ToArray());
+            }
             var status = errors.Any(x => x.Code is "file_too_large" or "too_many_units" or "translation_too_long" or "output_too_large"
                 or "office_package_limit_exceeded" or "office_plan_limit_exceeded" or "office_translation_limit_exceeded" or "office_schema_limit_exceeded") ? 413 : 422;
             return StatusCode(status, errors);

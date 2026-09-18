@@ -14,8 +14,9 @@ internal static class MarkdownTranslationApplier
     /// <param name="translations">Translated units in source order.</param>
     /// <param name="options">File processing limits.</param>
     /// <param name="cancellationToken">Token for cancelling this operation.</param>
+    /// <param name="validationBaseline">Whether nonempty translations use source text to validate intended structure changes.</param>
     /// <returns>Patched Markdown text, or null with validation errors.</returns>
-    public static (string? Text, IReadOnlyList<FileError> Errors) Apply(MarkdownExtraction extraction, IReadOnlyList<string> translations, FileHandlingOptions options, CancellationToken cancellationToken)
+    public static (string? Text, IReadOnlyList<FileError> Errors) Apply(MarkdownExtraction extraction, IReadOnlyList<string> translations, FileHandlingOptions options, CancellationToken cancellationToken, bool validationBaseline = false)
     {
         using var trace = DebugTrace.Enter("MarkdownTranslationApplier", "Apply", () => new { extraction, translations, options, cancellationToken });
         try
@@ -30,7 +31,7 @@ internal static class MarkdownTranslationApplier
                 return trace.Return<(string? Text, IReadOnlyList<FileError> Errors)>((null, [new("internal_anchor_change_unsupported", "Không thể đổi heading khi tài liệu có liên kết anchor nội bộ trong profile V1.")]));
             }
 
-            var replacements = new List<(int Start, int End, string Value)>();
+            var replacements = new List<(int Index, int Start, int End, string Value)>();
             long outputChars = extraction.Source.Text.Length;
             long outputBytes = Encoding.UTF8.GetByteCount(extraction.Source.Text) + (extraction.Source.HasBom ? 3 : 0);
             for (var i = 0; i < extraction.Units.Count; i++)
@@ -38,7 +39,7 @@ internal static class MarkdownTranslationApplier
                 cancellationToken.ThrowIfCancellationRequested();
                 var unit = extraction.Units[i];
                 var translated = translations[i];
-                using var item = DebugTrace.Item(i + 1);
+                using var item = DebugTrace.Unit(i, "decode", () => new { errors = errors.Where(e => e.Index == i).ToArray() });
                 item.State("unit", () => unit);
                 item.State("translation", () => translated);
                 if (translated == unit.Text)
@@ -54,13 +55,14 @@ internal static class MarkdownTranslationApplier
                     continue;
                 }
 
-                var (value, markerErrors) = DecodeTranslation(unit, translated, i);
+                var (value, markerErrors) = DecodeTranslation(unit, translated, i, validationBaseline);
                 errors.AddRange(markerErrors);
                 if (value is not null)
                 {
                     outputChars += value.Length - (unit.End - unit.Start);
                     outputBytes += Encoding.UTF8.GetByteCount(value) - Encoding.UTF8.GetByteCount(extraction.Source.Text.AsSpan(unit.Start, unit.End - unit.Start));
-                    replacements.Add((unit.Start, unit.End, value));
+                    replacements.Add((i, unit.Start, unit.End, value));
+                    item.State("replacement", () => new { unit.Start, unit.End, value });
                     item.State("outcome", () => "replacementQueued");
                 }
                 else
@@ -96,9 +98,11 @@ internal static class MarkdownTranslationApplier
             for (var i = 0; i < replacements.Count; i++)
             {
                 var patch = replacements[i];
+                using var item = DebugTrace.Unit(patch.Index, "apply");
                 output.Append(extraction.Source.Text, offset, patch.Start - offset);
                 output.Append(patch.Value);
                 offset = patch.End;
+                item.State("applied", () => new { patch.Start, patch.End, patch.Value });
             }
 
             output.Append(extraction.Source.Text, offset, extraction.Source.Text.Length - offset);
@@ -134,6 +138,8 @@ internal static class MarkdownTranslationApplier
             var count = Math.Min(translations.Count, extraction.Units.Count);
             for (var i = 0; i < count; i++)
             {
+                using var item = DebugTrace.Unit(i, "validate", () => new { errors = errors.Where(e => e.Index == i).ToArray() });
+                item.State("translation", () => translations[i]);
                 if (translations[i] is null)
                     errors.Add(new("invalid_translation", "Bản dịch không được null.", i, extraction.Units[i].Line));
                 else if (string.IsNullOrWhiteSpace(translations[i]))
@@ -168,25 +174,38 @@ internal static class MarkdownTranslationApplier
     /// <param name="unit">Original translation unit definition.</param>
     /// <param name="translation">Translated text containing preservation markers.</param>
     /// <param name="index">Zero-based unit index.</param>
+    /// <param name="validationBaseline">Whether nonempty translated bindings retain source text.</param>
     /// <returns>Decoded Markdown text, or null with marker validation errors.</returns>
-    private static (string? Value, List<FileError> Errors) DecodeTranslation(MarkdownUnit unit, string translation, int index)
+    private static (string? Value, List<FileError> Errors) DecodeTranslation(MarkdownUnit unit, string translation, int index, bool validationBaseline)
     {
         using var trace = DebugTrace.Enter("MarkdownTranslationApplier", "DecodeTranslation", () => new { unit, translation, index });
         try
         {
             var errors = new List<FileError>();
+            if (unit.IsMermaidLabel)
+            {
+                if (translation.Any(char.IsControl))
+                    return (null, [new("invalid_structure", "Nhãn Mermaid không được chứa xuống dòng hoặc ký tự điều khiển.", index, unit.Line)]);
+                var value = MermaidFlowchartCodec.Encode(validationBaseline ? unit.Text : translation);
+                trace.State("mermaidLabel", () => value);
+                return (value, errors);
+            }
             IReadOnlyList<MarkerToken> rawTokens;
             if (unit.TokenTemplate is { } template)
             {
                 var decoded = MarkdownTokenCodec.Decode(template, translation, index, unit.Line);
                 if (decoded.Error is not null)
                     return trace.Return<(string? Value, List<FileError> Errors)>((null, [decoded.Error]));
-                rawTokens = decoded.Tokens;
+                rawTokens = validationBaseline
+                    ? decoded.Tokens.Select((token, i) => !token.IsMarker && !string.IsNullOrWhiteSpace(token.Value)
+                        ? token with { Value = template.Tokens[i].Value } : token).ToArray()
+                    : decoded.Tokens;
             }
             else
                 rawTokens = MarkdownMarkerCodec.Parse(translation);
             trace.State("tokens", () => rawTokens);
             var tokens = CanonicalizeFormattingTokens(rawTokens, unit.Markers);
+            var emptyEmphasis = FindEmptyEmphasis(tokens, unit.Markers);
             trace.State("tokens", () => tokens);
             var seenOpen = new HashSet<int>();
             var seenClose = new HashSet<int>();
@@ -204,7 +223,9 @@ internal static class MarkdownTranslationApplier
                     continue;
                 }
 
-                var canonical = token.IsClosing ? MarkdownMarkerCodec.Close(token.Id) : MarkdownMarkerCodec.Open(token.Id);
+                var canonical = unit.TokenTemplate is null
+                    ? (token.IsClosing ? MarkdownMarkerCodec.Close(token.Id) : MarkdownMarkerCodec.Open(token.Id))
+                    : token.Value;
                 if (!string.Equals(token.Value, canonical, StringComparison.Ordinal))
                 {
                     errors.Add(new("invalid_marker_syntax", $"Marker {token.Value} không ở dạng chuẩn {canonical}.", index, unit.Line, token.Value));
@@ -222,7 +243,7 @@ internal static class MarkdownTranslationApplier
                     if (!seenOpen.Add(token.Id))
                         errors.Add(new("duplicate_marker", $"Marker {token.Value} bị lặp.", index, unit.Line, token.Value));
                     stack.Push(token.Id);
-                    output.Append(definition.OpenSource);
+                    if (!emptyEmphasis.Contains(token.Id)) output.Append(definition.OpenSource);
                 }
                 else
                 {
@@ -230,7 +251,7 @@ internal static class MarkdownTranslationApplier
                         errors.Add(new("duplicate_marker", $"Marker {token.Value} bị lặp.", index, unit.Line, token.Value));
                     if (stack.Count == 0 || stack.Pop() != token.Id)
                         errors.Add(new("invalid_marker_nesting", $"Marker {token.Value} đóng sai thứ tự.", index, unit.Line, token.Value));
-                    output.Append(definition.CloseSource);
+                    if (!emptyEmphasis.Contains(token.Id)) output.Append(definition.CloseSource);
                 }
             }
 
@@ -252,6 +273,33 @@ internal static class MarkdownTranslationApplier
             trace.Error(traceError);
             throw;
         }
+    }
+
+    /// <summary>
+    /// Finds emphasis wrappers without visible text or protected content.
+    /// </summary>
+    /// <param name="tokens">Decoded typed restoration bindings.</param>
+    /// <param name="markers">Source formatting and protection definitions.</param>
+    /// <returns>Emphasis IDs whose delimiters must be omitted.</returns>
+    private static HashSet<int> FindEmptyEmphasis(IReadOnlyList<MarkerToken> tokens, IReadOnlyDictionary<int, MarkerDefinition> markers)
+    {
+        var empty = markers.Values.Where(m => m.IsEmphasis).Select(m => m.Id).ToHashSet();
+        var owners = new Stack<int>();
+        foreach (var token in tokens)
+        {
+            if (!token.IsMarker)
+            {
+                if (!string.IsNullOrWhiteSpace(token.Value)) empty.ExceptWith(owners);
+            }
+            else if (!token.IsClosing)
+            {
+                if (markers.TryGetValue(token.Id, out var definition) &&
+                    (definition.Kind == MarkerKind.Protected || !definition.IsEmphasis)) empty.ExceptWith(owners);
+                owners.Push(token.Id);
+            }
+            else if (owners.Count > 0) owners.Pop();
+        }
+        return empty;
     }
 
     /// <summary>

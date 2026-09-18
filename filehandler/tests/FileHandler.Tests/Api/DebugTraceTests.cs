@@ -11,6 +11,7 @@ namespace FileHandler.Tests.Api;
 /// <summary>
 /// Integration tests verifying end-to-end diagnostic tracing behavior.
 /// </summary>
+[Collection("Debug trace runtime toggle")]
 public sealed class DebugTraceTests
 {
 
@@ -34,6 +35,7 @@ public sealed class DebugTraceTests
                 options.Enabled = enabled;
                 options.Directory = directory;
                 options.CaptureContent = captureContent;
+                options.UnitIndexes = [0, 1];
             })));
 
     /// <summary>

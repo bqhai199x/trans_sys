@@ -60,7 +60,9 @@ internal static class PlainTextSegmenter
                 else if (paragraphStart >= 0)
                 {
                     units.Add(new(paragraphStart, paragraphEnd, new(firstLine, lastLine)));
-                    using var item = DebugTrace.Item(units.Count);
+                    using var item = DebugTrace.Unit(units.Count - 1, "extract");
+                    DebugTrace.ConfirmUnit();
+                    item.State("sourceText", () => text.Substring(paragraphStart, paragraphEnd - paragraphStart));
                     item.State("unit", () => units[^1]);
                     paragraphStart = -1;
                 }
@@ -73,7 +75,9 @@ internal static class PlainTextSegmenter
             if (paragraphStart >= 0)
             {
                 units.Add(new(paragraphStart, paragraphEnd, new(firstLine, lastLine)));
-                using var item = DebugTrace.Item(units.Count);
+                using var item = DebugTrace.Unit(units.Count - 1, "extract");
+                DebugTrace.ConfirmUnit();
+                item.State("sourceText", () => text.Substring(paragraphStart, paragraphEnd - paragraphStart));
                 item.State("unit", () => units[^1]);
             }
             trace.State("unitCount", () => units.Count);

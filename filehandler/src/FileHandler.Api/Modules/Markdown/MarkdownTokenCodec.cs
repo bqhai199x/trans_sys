@@ -21,8 +21,10 @@ internal static class MarkdownTokenCodec
         using var trace = DebugTrace.Enter("MarkdownTokenCodec", "Encode", () => new { inline.Start, inline.End });
         try
         {
-            var tokens = MarkdownMarkerCodec.Parse(inline.Text);
+            var tokens = inline.Tokens;
             var parts = new List<MarkdownTokenPart>();
+            var owners = new Stack<int>();
+            string? previousStyle = null;
             var runs = 0;
             var anchors = 0;
             for (var i = 0; i < tokens.Count; i++)
@@ -30,13 +32,35 @@ internal static class MarkdownTokenCodec
                 var token = tokens[i];
                 if (token.IsMarker)
                 {
-                    if (!token.IsClosing && inline.Markers[token.Id].Kind == MarkerKind.Protected)
-                        parts.Add(new("k" + (anchors++).ToString(CultureInfo.InvariantCulture), i, true, string.Empty));
+                    var definition = inline.Markers[token.Id];
+                    if (definition.Kind == MarkerKind.Formatting)
+                    {
+                        if (token.IsClosing) owners.Pop();
+                        else owners.Push(token.Id);
+                    }
+                    else if (!token.IsClosing)
+                    {
+                        parts.Add(new("k" + (anchors++).ToString(CultureInfo.InvariantCulture), [i], true, string.Empty));
+                        previousStyle = null;
+                    }
                 }
-                else if (string.IsNullOrWhiteSpace(token.Value))
-                    parts.Add(new("k" + (anchors++).ToString(CultureInfo.InvariantCulture), i, true, token.Value));
                 else
-                    parts.Add(new("r" + (runs++).ToString(CultureInfo.InvariantCulture), i, false, token.Value));
+                {
+                    var style = string.Join("/", owners.Reverse().Select(id => inline.Markers[id].IsEmphasis
+                        ? "emphasis:" + inline.Markers[id].OpenSource.Replace('_', '*')
+                        : "owner:" + id.ToString(CultureInfo.InvariantCulture)));
+                    if (parts.Count > 0 && !parts[^1].IsAnchor && previousStyle == style)
+                        parts[^1] = parts[^1] with
+                        {
+                            SourceText = parts[^1].SourceText + token.Value,
+                            TokenIndexes = [.. parts[^1].TokenIndexes, i]
+                        };
+                    else if (string.IsNullOrWhiteSpace(token.Value))
+                        parts.Add(new("k" + (anchors++).ToString(CultureInfo.InvariantCulture), [i], true, token.Value));
+                    else
+                        parts.Add(new("r" + (runs++).ToString(CultureInfo.InvariantCulture), [i], false, token.Value));
+                    previousStyle = style;
+                }
             }
 
             var structured = runs != 1 || anchors != 0;
@@ -83,6 +107,7 @@ internal static class MarkdownTokenCodec
         {
             var restored = template.Tokens.ToArray();
             var offset = 0;
+            var hasContent = false;
             foreach (var part in template.Parts)
             {
                 var marker = part.IsAnchor ? TranslationTokenSyntax.Anchor(part.Id) : TranslationTokenSyntax.Open(part.Id);
@@ -99,12 +124,14 @@ internal static class MarkdownTokenCodec
                     if (!TranslationTokenSyntax.TryReadText(translation, ref offset, TranslationTokenSyntax.Close(part.Id), out text))
                         return Reject(trace, index, line, "invalid_marker_syntax", marker);
                 }
-                if (string.IsNullOrWhiteSpace(text))
-                    return Reject(trace, index, line, "empty_translation", marker);
-                restored[part.TokenIndex] = restored[part.TokenIndex] with { Value = text };
+                hasContent |= !string.IsNullOrWhiteSpace(text);
+                foreach (var tokenIndex in part.TokenIndexes)
+                    restored[tokenIndex] = restored[tokenIndex] with { Value = tokenIndex == part.TokenIndexes[0] ? text : string.Empty };
             }
             if (template.Structured && offset != translation.Length)
                 return Reject(trace, index, line, "invalid_marker_syntax", null);
+            if (!hasContent)
+                return Reject(trace, index, line, "empty_translation", null);
             trace.State("validation", () => "valid");
             trace.Return(new { outcome = "success", tokenCount = restored.Length });
             return (restored, null);
@@ -130,7 +157,7 @@ internal static class MarkdownTokenCodec
         TraceCall trace, int index, SourceLineRange line, string code, string? marker)
     {
         var error = new FileError(code, code == "empty_translation"
-            ? "Vùng dịch không được rỗng hoặc chỉ chứa khoảng trắng."
+            ? "Đơn vị dịch phải có nội dung trong ít nhất một slot."
             : "Bản dịch phải giữ nguyên token ox, thứ tự và cú pháp escape của nguồn.", index, line, marker);
         trace.State("validation", () => new { error.Code, error.Index, error.Marker });
         trace.Return(new { outcome = "failed", code });
@@ -150,7 +177,7 @@ internal sealed record MarkdownTokenTemplate(bool Structured, IReadOnlyList<Mark
 /// Public run or anchor mapped to original restoration token.
 /// </summary>
 /// <param name="Id">Canonical run or anchor identifier scoped to unit.</param>
-/// <param name="TokenIndex">Original restoration token index.</param>
+/// <param name="TokenIndexes">Original restoration token indexes sharing formatting and ownership.</param>
 /// <param name="IsAnchor">Whether original content must remain unchanged.</param>
 /// <param name="SourceText">Original decoded text for literal binding.</param>
-internal sealed record MarkdownTokenPart(string Id, int TokenIndex, bool IsAnchor, string SourceText);
+internal sealed record MarkdownTokenPart(string Id, IReadOnlyList<int> TokenIndexes, bool IsAnchor, string SourceText);

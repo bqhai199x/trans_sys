@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using FileHandler.Api.Common;
+using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Office;
 
@@ -56,5 +57,7 @@ internal sealed class OfficeUnitCollection : Collection<OfficeTranslationUnit>, 
         _characters += item.EncodedSource.Length;
         _bindings += item.Bindings.Count;
         base.InsertItem(index, item);
+        DebugTrace.ConfirmUnit();
+        DebugTrace.Current?.State("unit", () => item);
     }
 }

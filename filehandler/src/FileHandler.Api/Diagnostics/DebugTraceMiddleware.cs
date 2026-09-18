@@ -56,6 +56,7 @@ internal sealed class DebugTraceMiddleware(RequestDelegate next, IOptionsMonitor
             {
                 Enabled = true,
                 CaptureContent = configured.CaptureContent,
+                UnitIndexes = DebugTrace.UnitIndexesOverride ?? configured.UnitIndexes ?? [],
                 MaxValueLength = Math.Clamp(configured.MaxValueLength, 64, 20000),
                 MaxEvents = Math.Clamp(configured.MaxEvents, 100, 100000),
                 MaxTraceBytes = Math.Clamp(configured.MaxTraceBytes, 4096, 67108864)

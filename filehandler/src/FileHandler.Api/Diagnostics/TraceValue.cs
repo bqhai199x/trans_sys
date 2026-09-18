@@ -19,6 +19,50 @@ internal static class TraceValue
 {
 
     /// <summary>
+    /// Serializer for finite unit snapshots without content truncation.
+    /// </summary>
+    private static readonly JsonSerializerOptions CompleteOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        IncludeFields = true,
+        MaxDepth = 256,
+        Converters = { new JsonStringEnumConverter(), new BufferConverter() }
+    };
+
+    /// <summary>
+    /// Captures an explicit unit-local value without string or collection truncation.
+    /// </summary>
+    /// <param name="value">Finite snapshot containing no document object graph.</param>
+    /// <returns>Independent JSON snapshot.</returns>
+    internal static object CaptureComplete(object? value) => JsonSerializer.SerializeToElement(value, CompleteOptions);
+
+    /// <summary>
+    /// Serializes mutable text buffers as complete strings at capture time.
+    /// </summary>
+    private sealed class BufferConverter : JsonConverter<StringBuilder>
+    {
+
+        /// <summary>
+        /// Reads a text buffer from JSON.
+        /// </summary>
+        /// <param name="reader">JSON reader.</param>
+        /// <param name="typeToConvert">Requested buffer type.</param>
+        /// <param name="options">Serializer settings.</param>
+        /// <returns>Buffer containing supplied string.</returns>
+        public override StringBuilder Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) => new(reader.GetString());
+
+        /// <summary>
+        /// Writes complete buffer contents.
+        /// </summary>
+        /// <param name="writer">JSON writer.</param>
+        /// <param name="value">Buffer to snapshot.</param>
+        /// <param name="options">Serializer settings.</param>
+        /// <returns>No return value.</returns>
+        public override void Write(Utf8JsonWriter writer, StringBuilder value, JsonSerializerOptions options) => writer.WriteStringValue(value.ToString());
+    }
+
+    /// <summary>
     /// Estimates bounded snapshot storage using worst-case JSON string escaping.
     /// </summary>
     /// <param name="value">Already captured snapshot.</param>

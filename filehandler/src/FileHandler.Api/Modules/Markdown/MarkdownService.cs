@@ -95,6 +95,13 @@ public sealed class MarkdownService : IFileHandler
             trace.State("stage", () => "validateStructure");
             var structureErrors = _extractor.ValidateStructure(document!.Text, text!);
             if (structureErrors.Count > 0)
+            {
+                var baseline = MarkdownTranslationApplier.Apply(extraction, translatedTexts, _options, cancellationToken, validationBaseline: true);
+                if (baseline.Errors.Count > 0)
+                    return trace.Return<ExportResult>(new(null, ContentType, baseline.Errors));
+                structureErrors = _extractor.ValidateStructure(baseline.Text!, text!);
+            }
+            if (structureErrors.Count > 0)
                 return trace.Return<ExportResult>(new(null, ContentType, structureErrors));
             trace.State("stage", () => "encodeOutput");
             var bytes = MarkdownSourceReader.Encode(text!, document!.HasBom);

@@ -173,7 +173,7 @@ public sealed class MarkdownServiceTests
         var translations = imported.Texts.Select(t => t.Replace("Read", "Lire")).ToArray();
         var exported = await service.ExportAsync(new MemoryStream(Encoding.UTF8.GetBytes(source)), translations);
         Assert.Empty(exported.Errors);
-        Assert.Equal("Lire <keepme literally", Encoding.UTF8.GetString(exported.Content!));
+        Assert.Equal(@"Lire \<keepme literally", Encoding.UTF8.GetString(exported.Content!));
     }
 
     /// <summary>

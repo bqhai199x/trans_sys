@@ -23,6 +23,39 @@ internal static class DebugTrace
     public static bool? EnabledOverride { get; set; }
 
     /// <summary>
+    /// Atomically replaced runtime selection; callers receive independent arrays.
+    /// </summary>
+    private static int[]? _unitIndexes;
+
+    /// <summary>
+    /// Runtime index override, or null to use configured indices.
+    /// </summary>
+    internal static int[]? UnitIndexesOverride
+    {
+        get => Volatile.Read(ref _unitIndexes)?.ToArray();
+        set => Volatile.Write(ref _unitIndexes, value?.Distinct().Order().ToArray());
+    }
+
+    /// <summary>
+    /// Starts a translation-unit scope with independent zero-based identity.
+    /// </summary>
+    /// <param name="index">Index in imported texts.</param>
+    /// <param name="phase">Processing phase.</param>
+    /// <param name="result">Optional unit-local result captured at scope completion.</param>
+    /// <returns>Scope restoring its parent when disposed.</returns>
+    internal static TraceUnit Unit(int index, string phase, Func<object?>? result = null) => new(index, phase, result);
+
+    /// <summary>
+    /// Confirms current extraction candidate produced a translation unit.
+    /// </summary>
+    /// <returns>No return value.</returns>
+    internal static void ConfirmUnit()
+    {
+        for (var scope = Current; scope is not null; scope = scope.Parent)
+            if (scope is TraceUnit unit) { unit.Confirm(); return; }
+    }
+
+    /// <summary>
     /// Active scope for current asynchronous flow.
     /// </summary>
     public static TraceScope? Current { get => Active.Value; set => Active.Value = value; }
@@ -368,6 +401,7 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
+        MaxDepth = 256,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -430,6 +464,64 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
     private bool _resultWritten;
 
     /// <summary>
+    /// Confirmed selected indices encountered during this request.
+    /// </summary>
+    private readonly HashSet<int> _foundUnits = [];
+
+    /// <summary>
+    /// Immutable selection copied when request starts.
+    /// </summary>
+    private readonly int[]? _selection;
+
+    /// <summary>
+    /// Whether session captures only explicitly selected translation units.
+    /// </summary>
+    internal bool Focused => _selection is not null;
+
+    /// <summary>
+    /// Checks immutable request selection.
+    /// </summary>
+    /// <param name="index">Zero-based translation index.</param>
+    /// <returns>True when index is selected or session uses legacy capture.</returns>
+    internal bool Selects(int index) => _selection is null || Array.BinarySearch(_selection, index) >= 0;
+
+    /// <summary>
+    /// Registers confirmed unit without capturing content.
+    /// </summary>
+    /// <param name="index">Zero-based translation index.</param>
+    /// <returns>No return value.</returns>
+    internal void Found(int index)
+    {
+        lock (_gate) _foundUnits.Add(index);
+    }
+
+    /// <summary>
+    /// Registers selected unit node under its visible parent.
+    /// </summary>
+    /// <param name="parent">Visible parent node, or null.</param>
+    /// <param name="node">Unit node to register.</param>
+    /// <returns>No return value.</returns>
+    internal void AddUnit(TraceNode? parent, TraceNode node)
+    {
+        lock (_gate)
+        {
+            if (node.Excluded || !RecordEvent()) return;
+            (parent?.Children ?? _document.Calls).Add(node);
+        }
+    }
+
+    /// <summary>
+    /// Removes a candidate confirmed to contain no translatable text.
+    /// </summary>
+    /// <param name="parent">Visible parent node, or null.</param>
+    /// <param name="node">Candidate node to remove.</param>
+    /// <returns>No return value.</returns>
+    internal void RemoveUnit(TraceNode? parent, TraceNode node)
+    {
+        lock (_gate) (parent?.Children ?? _document.Calls).Remove(node);
+    }
+
+    /// <summary>
     /// Whether session can accept more trace events.
     /// </summary>
     internal bool Accepting
@@ -438,7 +530,7 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
         {
             lock (_gate)
             {
-                return !_failed && !_closed && _events < _options.MaxEvents && _capturedBytes < _options.MaxTraceBytes;
+                return !_failed && !_closed && (Focused || _events < _options.MaxEvents && _capturedBytes < _options.MaxTraceBytes);
             }
         }
     }
@@ -458,9 +550,12 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
     {
         _path = path;
         _options = options;
+        _selection = options.UnitIndexes?.Distinct().Order().ToArray();
         _logger = logger;
         _document.Id = Path.GetFileNameWithoutExtension(path);
         _document.Timestamp = DateTime.UtcNow;
+        _document.Version = Focused ? 2 : 1;
+        _document.UnitIndexes = _selection?.ToArray();
     }
 
     /// <summary>
@@ -486,8 +581,11 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
             {
                 Type = "call",
                 Id = id,
-                Target = target
+                Target = target,
+                UnitIndex = parentNode?.UnitIndex,
+                Excluded = parentNode?.Excluded == true
             };
+            if (node.Excluded) return node;
             if (!RecordEvent()) return node;
             if (parentNode is not null)
                 parentNode.Children.Add(node);
@@ -510,8 +608,11 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
             var node = new TraceNode
             {
                 Type = "item",
-                Index = index
+                Index = index,
+                UnitIndex = parentNode.UnitIndex,
+                Excluded = parentNode.Excluded || Focused && parentNode.UnitIndex is null
             };
+            if (node.Excluded) return node;
             if (!RecordEvent()) return node;
             parentNode.Children.Add(node);
             return node;
@@ -526,6 +627,7 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
     /// <returns>No return value.</returns>
     internal void SetInput(TraceNode node, Func<object?> input)
     {
+        if (node.Excluded || Focused) return;
         lock (_gate)
         {
             if (!RecordEvent()) return;
@@ -570,6 +672,7 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
     /// <returns>No return value.</returns>
     internal void AddState(TraceNode node, string name, Func<object?> value)
     {
+        if (node.Excluded || Focused && node.UnitIndex is null && name is not ("stage" or "outcome" or "decision" or "unitCount" or "translationCount" or "outputBytes" or "errorCodes")) return;
         lock (_gate)
         {
             if (!RecordEvent()) return;
@@ -590,10 +693,11 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
     /// <returns>No return value.</returns>
     internal void SetOutput(TraceNode node, Func<object?> output, double elapsedMs)
     {
+        if (node.Excluded) return;
         lock (_gate)
         {
             if (!RecordEvent()) return;
-            node.Out = Capture(output);
+            if (!Focused) node.Out = Capture(output);
             node.DurationMs = Math.Round(elapsedMs, 3);
         }
     }
@@ -607,6 +711,7 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
     /// <returns>No return value.</returns>
     internal void SetError(TraceNode node, Exception error, double elapsedMs)
     {
+        if (node.Excluded) return;
         lock (_gate)
         {
             if (!RecordEvent()) return;
@@ -640,7 +745,7 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
             _document.DurationMs = Math.Round(elapsedMs, 3);
             _document.Cancelled = isCancelled || error is OperationCanceledException;
             var msg = _options.CaptureContent ? error?.Message : "[Redacted]";
-            if (_events >= _options.MaxEvents)
+            if (!Focused && _events >= _options.MaxEvents)
             {
                 var prefix = error is not null ? $"{error.GetType().Name}: {msg} - " : "";
                 _document.Error = $"{prefix}[Truncated - MaxEvents reached]";
@@ -666,6 +771,7 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
     private bool RecordEvent()
     {
         if (_failed || _closed) return false;
+        if (Focused) return true;
         if (_capturedBytes >= _options.MaxTraceBytes) return false;
         _capturedBytes += 256;
         if (_events >= _options.MaxEvents) return false;
@@ -713,6 +819,7 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
         if (!_options.CaptureContent) return "[Hidden]";
         try
         {
+            if (Focused) return TraceValue.CaptureComplete(factory());
             var captured = TraceValue.Capture(factory(), _options);
             lock (_gate)
             {
@@ -737,7 +844,8 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
         if (_failed) return;
         try
         {
-            using var output = new BoundedTraceFile(_path, Math.Max(4096, _options.MaxTraceBytes));
+            CompleteSelection();
+            using var output = new BoundedTraceFile(_path, Focused ? long.MaxValue : Math.Max(4096, _options.MaxTraceBytes));
             try
             {
                 JsonSerializer.Serialize(output, _document, JsonOptions);
@@ -815,7 +923,8 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
         }
         try
         {
-            await using var output = new BoundedTraceFile(_path, Math.Max(4096, _options.MaxTraceBytes));
+            CompleteSelection();
+            await using var output = new BoundedTraceFile(_path, Focused ? long.MaxValue : Math.Max(4096, _options.MaxTraceBytes));
             try
             {
                 await JsonSerializer.SerializeAsync(output, _document, JsonOptions).ConfigureAwait(false);
@@ -836,5 +945,14 @@ internal sealed class TraceSession : IDisposable, IAsyncDisposable
             }
         }
         catch (Exception ex) { Fail(ex); }
+    }
+
+    /// <summary>
+    /// Records requested indices that were not reached.
+    /// </summary>
+    /// <returns>No return value.</returns>
+    private void CompleteSelection()
+    {
+        if (Focused) _document.MissingUnitIndexes = _selection!.Where(i => !_foundUnits.Contains(i)).ToArray();
     }
 }

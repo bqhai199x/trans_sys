@@ -233,20 +233,24 @@ public sealed class WordExtractor : IWordExtractor
         OpenXmlElement partRoot,
         OfficeUnitCollection units)
     {
-        var builder = new OfficeTemplateBuilder(_options);
-        var fieldDepth = 0;
-        ReadInline(paragraph, partUri, builder, ref fieldDepth);
-        if (fieldDepth != 0)
-            throw new InvalidOperationException("Fields crossing paragraph boundaries are unsupported.");
-        var template = builder.Build();
-        if (template is not null)
+        using (var unitTrace = DebugTrace.Unit(units.Count, "extract"))
         {
-            var path = OfficeTextBindings.Path(paragraph);
-            var id = OfficeIdentity.CreateUnitId("office-v1", string.Empty, OfficeFormat.Word,
-                partUri, OfficeObjectKind.Paragraph, path, units.Count);
-            units.Add(new OfficeTranslationUnit(units.Count, id, id, new OfficeLocation(partUri, path),
-                template.Mode, _codec.Encode(template), template.Slots, template.Anchors, template.Bindings,
-                Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Concat(template.Slots.Select(s => s.OriginalText)))))));
+            var builder = new OfficeTemplateBuilder(_options);
+            var fieldDepth = 0;
+            ReadInline(paragraph, partUri, builder, ref fieldDepth);
+            if (fieldDepth != 0)
+                throw new InvalidOperationException("Fields crossing paragraph boundaries are unsupported.");
+            var template = builder.Build();
+            if (template is not null)
+            {
+                var path = OfficeTextBindings.Path(paragraph);
+                var id = OfficeIdentity.CreateUnitId("office-v1", string.Empty, OfficeFormat.Word,
+                    partUri, OfficeObjectKind.Paragraph, path, units.Count);
+                units.Add(new OfficeTranslationUnit(units.Count, id, id, new OfficeLocation(partUri, path),
+                    template.Mode, _codec.Encode(template), template.Slots, template.Anchors, template.Bindings,
+                    Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Concat(template.Slots.Select(s => s.OriginalText)))))));
+            }
+            else unitTrace.Discard();
         }
         foreach (var textbox in paragraph.Descendants<W.TextBoxContent>().Where(t => t.Ancestors<W.Paragraph>().FirstOrDefault() == paragraph))
             foreach (var nested in textbox.Descendants<W.Paragraph>().Where(p => p.Ancestors<W.TextBoxContent>().FirstOrDefault() == textbox))
@@ -283,7 +287,7 @@ public sealed class WordExtractor : IWordExtractor
                 var owner = run?.Parent;
                 var context = owner is W.Hyperlink ? string.Concat(owner.GetAttributes().Select(a => $"{a.NamespaceUri}:{a.LocalName}:{a.Value?.Length ?? 0}:{a.Value}")) +
                     string.Join("/", OfficeTextBindings.Path(owner).Select(p => p.SiblingOrdinal)) : "";
-                builder.Text(text, partUri, (run?.RunProperties?.OuterXml ?? "") + context);
+                builder.Text(text, partUri, OfficeStyleFingerprint.Create(run?.RunProperties) + context);
             }
             else if (child is W.SimpleField or W.FieldCode)
                 builder.Anchor(child, AnchorKind.Field);

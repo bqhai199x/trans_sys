@@ -102,7 +102,7 @@ public sealed class PlainTextService : IFileHandler
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 var translation = translations[i];
-                using var item = DebugTrace.Item(i + 1);
+                using var item = DebugTrace.Unit(i, "validate");
                 item.State("unit", () => units[i]);
                 item.State("translation", () => translation);
                 var errorCount = errors.Count;
@@ -181,7 +181,7 @@ public sealed class PlainTextService : IFileHandler
                 cancellationToken.ThrowIfCancellationRequested();
                 var unit = units[i];
                 var translation = translations[i];
-                using var item = DebugTrace.Item(i + 1);
+                using var item = DebugTrace.Unit(i, "apply");
                 item.State("unit", () => unit);
                 item.State("translation", () => translation);
                 if (source.Text.AsSpan(unit.Start, unit.End - unit.Start).SequenceEqual(translation.AsSpan()))
