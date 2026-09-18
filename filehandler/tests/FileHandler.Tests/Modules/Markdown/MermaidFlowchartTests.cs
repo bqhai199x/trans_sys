@@ -94,7 +94,7 @@ public sealed class MermaidFlowchartTests
     [Fact]
     public async Task ContainersAndOtherCode_PreserveSource()
     {
-        const string source = "Before\n\n> ```mermaid\n> flowchart LR\n> A[One] --> B(Two)\n> %% C[Comment]\n> style A fill:#fff\n> click A \"https://example.test/X[URL]\"\n> ```\n\n```js\nA[Not a label]\n```\n\n```mermaid\nsequenceDiagram\nA->>B: Not a flowchart\n```\n\nAfter";
+        const string source = "Before\n\n> ```mermaid\n> flowchart LR\n> A[One] --> B(Two)\n> %% C[Comment]\n> style A fill:#fff\n> click A \"https://example.test/X[URL]\"\n> ```\n\n```js\nA[Not a label]\n```\n\n```mermaid\ngantt\ndateFormat YYYY-MM-DD\nsection Section\nTask: a1, 2024-01-01, 30d\n```\n\nAfter";
         var bytes = Encoding.UTF8.GetBytes(source);
         var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
         var imported = await service.ImportAsync(new MemoryStream(bytes));
@@ -171,5 +171,42 @@ public sealed class MermaidFlowchartTests
         var output = await service.ExportAsync(new MemoryStream(Encoding.UTF8.GetBytes(source)), ["Một", "Hai", "Ba", "Bốn"]);
         Assert.Empty(output.Errors);
         Assert.Equal(source.Replace("[One]", "[\"Một\"]").Replace("[Two]", "[\"Hai\"]").Replace("[Three]", "[\"Ba\"]").Replace("[Four]", "[\"Bốn\"]"), Encoding.UTF8.GetString(output.Content!));
+    }
+
+    /// <summary>
+    /// Checks flowchart subgraphs and lowercase orientation declarations extract titles and round-trip.
+    /// </summary>
+    /// <returns>Task completing after subgraph extraction assertions.</returns>
+    [Fact]
+    public async Task FlowchartSubgraphsAndLowercaseDirection_ExtractsTitles()
+    {
+        const string source = """
+            ```mermaid
+            flowchart td
+                subgraph Container [Main Group]
+                    A[Node One] --> B[Node Two]
+                end
+                subgraph Secondary Title
+                    C[Node Three]
+                end
+            ```
+            """;
+        var bytes = Encoding.UTF8.GetBytes(source);
+        var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
+        var imported = await service.ImportAsync(new MemoryStream(bytes));
+        Assert.Empty(imported.Errors);
+        Assert.Equal(new[] { "Main Group", "Node One", "Node Two", "Secondary Title", "Node Three" }, imported.Texts);
+
+        var identity = await service.ExportAsync(new MemoryStream(bytes), imported.Texts);
+        Assert.Empty(identity.Errors);
+        Assert.Equal(bytes, identity.Content);
+
+        var translated = imported.Texts.Select(t => t + " Đã Dịch").ToArray();
+        var exported = await service.ExportAsync(new MemoryStream(bytes), translated);
+        Assert.Empty(exported.Errors);
+
+        var reimported = await service.ImportAsync(new MemoryStream(exported.Content!));
+        Assert.Empty(reimported.Errors);
+        Assert.Equal(translated, reimported.Texts);
     }
 }

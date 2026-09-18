@@ -112,6 +112,11 @@ internal sealed record MarkdownUnit(int Start, int End, string Text, IReadOnlyDi
     /// Whether translated text requires Mermaid label encoding instead of Markdown escaping.
     /// </summary>
     public bool IsMermaidLabel { get; init; }
+
+    /// <summary>
+    /// Whether Mermaid label requires enclosing double quotes on export.
+    /// </summary>
+    public bool MermaidQuoted { get; init; }
 }
 
 /// <summary>

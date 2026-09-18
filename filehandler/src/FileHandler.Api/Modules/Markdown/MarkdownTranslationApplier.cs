@@ -186,7 +186,7 @@ internal static class MarkdownTranslationApplier
             {
                 if (translation.Any(char.IsControl))
                     return (null, [new("invalid_structure", "Nhãn Mermaid không được chứa xuống dòng hoặc ký tự điều khiển.", index, unit.Line)]);
-                var value = MermaidFlowchartCodec.Encode(validationBaseline ? unit.Text : translation);
+                var value = MermaidCodec.Encode(validationBaseline ? unit.Text : translation, unit.MermaidQuoted);
                 trace.State("mermaidLabel", () => value);
                 return (value, errors);
             }

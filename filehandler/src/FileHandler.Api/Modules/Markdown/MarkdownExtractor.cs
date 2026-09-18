@@ -44,11 +44,15 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
                 cancellationToken.ThrowIfCancellationRequested();
                 if (block is FencedCodeBlock fence)
                 {
-                    foreach (var label in MermaidFlowchartCodec.Extract(fence, cancellationToken))
+                    foreach (var label in MermaidCodec.Extract(fence, cancellationToken))
                     {
                         using var labelTrace = DebugTrace.Unit(units.Count, "extract");
                         units.Add(new(label.Start, label.End, label.Text, new Dictionary<int, MarkerDefinition>(),
-                            source.Lines.GetRange(label.Start, label.End), false, "\n", false) { IsMermaidLabel = true });
+                            source.Lines.GetRange(label.Start, label.End), false, "\n", false)
+                        {
+                            IsMermaidLabel = true,
+                            MermaidQuoted = label.Quoted
+                        });
                         DebugTrace.ConfirmUnit();
                         labelTrace.State("unit", () => units[^1]);
                         if (units.Count > maxUnits)
@@ -152,7 +156,7 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
                 switch (item)
                 {
                     case FencedCodeBlock fence:
-                        var labels = MermaidFlowchartCodec.Extract(fence, default).ToArray();
+                        var labels = MermaidCodec.Extract(fence, default).ToArray();
                         var offset = fence.Span.Start;
                         foreach (var label in labels)
                         {
