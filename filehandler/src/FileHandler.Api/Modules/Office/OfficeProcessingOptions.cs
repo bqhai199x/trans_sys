@@ -52,6 +52,16 @@ public sealed class OfficeProcessingOptions
     public int MaxObjects { get; init; } = 100000;
 
     /// <summary>
+    /// Maximum retained binding references across extraction units.
+    /// </summary>
+    public int MaxBindings { get; init; } = 100000;
+
+    /// <summary>
+    /// Maximum attributes on one XML element before DOM loading.
+    /// </summary>
+    public int MaxAttributesPerElement { get; init; } = 256;
+
+    /// <summary>
     /// Maximum allowed total characters stored in extraction plan.
     /// </summary>
     public long MaxPlanChars { get; init; } = 2000000L;
@@ -88,6 +98,8 @@ public sealed class OfficeProcessingOptions
     /// <exception cref="InvalidOperationException">One or more configured limits are invalid.</exception>
     public void Validate()
     {
+        if (MaxBindings <= 0 || MaxAttributesPerElement <= 0)
+            throw new InvalidOperationException("Binding and attribute limits must be positive.");
         if (MaxPackageEntries <= 0)
             throw new InvalidOperationException($"{nameof(MaxPackageEntries)} must be positive.");
         if (MaxRelationships <= 0)

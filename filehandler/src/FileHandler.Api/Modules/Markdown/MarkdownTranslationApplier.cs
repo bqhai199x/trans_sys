@@ -31,6 +31,7 @@ internal static class MarkdownTranslationApplier
             }
 
             var replacements = new List<(int Start, int End, string Value)>();
+            long outputChars = extraction.Source.Text.Length;
             long outputBytes = Encoding.UTF8.GetByteCount(extraction.Source.Text) + (extraction.Source.HasBom ? 3 : 0);
             for (var i = 0; i < extraction.Units.Count; i++)
             {
@@ -57,6 +58,7 @@ internal static class MarkdownTranslationApplier
                 errors.AddRange(markerErrors);
                 if (value is not null)
                 {
+                    outputChars += value.Length - (unit.End - unit.Start);
                     outputBytes += Encoding.UTF8.GetByteCount(value) - Encoding.UTF8.GetByteCount(extraction.Source.Text.AsSpan(unit.Start, unit.End - unit.Start));
                     replacements.Add((unit.Start, unit.End, value));
                     item.State("outcome", () => "replacementQueued");
@@ -69,10 +71,9 @@ internal static class MarkdownTranslationApplier
             if (errors.Count > 0)
                 return trace.Return<(string? Text, IReadOnlyList<FileError> Errors)>((null, errors));
 
-            replacements.Sort((a, b) => b.Start.CompareTo(a.Start));
             for (var i = 1; i < replacements.Count; i++)
             {
-                if (replacements[i - 1].Start < replacements[i].End)
+                if (replacements[i - 1].End > replacements[i].Start)
                 {
                     trace.State("conflict", () => new { previous = new { replacements[i - 1].Start, replacements[i - 1].End }, current = new { replacements[i].Start, replacements[i].End } });
                     errors.Add(new("patch_conflict", "Các vùng thay thế bị chồng lấn."));
@@ -82,14 +83,17 @@ internal static class MarkdownTranslationApplier
             if (errors.Count > 0)
                 return trace.Return<(string? Text, IReadOnlyList<FileError> Errors)>((null, errors));
 
-            foreach (var patch in replacements)
+            for (var i = replacements.Count - 1; i >= 0; i--)
+            {
+                var patch = replacements[i];
                 trace.State("patch", () => new { patch.Start, patch.End, patch.Value });
+            }
 
             if (outputBytes > options.MaxOutputBytes)
                 return (null, [new FileError("output_too_large", "Kết quả vượt giới hạn đầu ra.")]);
-            var output = new StringBuilder((int)Math.Min(outputBytes, int.MaxValue));
+            var output = new StringBuilder((int)Math.Min(outputChars, int.MaxValue));
             var offset = 0;
-            for (var i = replacements.Count - 1; i >= 0; i--)
+            for (var i = 0; i < replacements.Count; i++)
             {
                 var patch = replacements[i];
                 output.Append(extraction.Source.Text, offset, patch.Start - offset);

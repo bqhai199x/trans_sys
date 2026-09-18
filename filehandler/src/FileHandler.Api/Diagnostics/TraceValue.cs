@@ -139,12 +139,12 @@ internal static class TraceValue
     /// <returns>Bounded string or JSON snapshot.</returns>
     private static object? SnapshotString(string text, int depth, int limit, ref int budget)
     {
-        var trimmed = text.Trim();
-        if (trimmed.Length <= Math.Max(limit * 8, 32768) && ((trimmed.StartsWith('{') && trimmed.EndsWith('}')) || (trimmed.StartsWith('[') && trimmed.EndsWith(']'))))
+        var trimmed = text.AsSpan().Trim();
+        if (trimmed.Length <= Math.Max(limit * 8, 32768) && ((trimmed.StartsWith("{") && trimmed.EndsWith("}")) || (trimmed.StartsWith("[") && trimmed.EndsWith("]"))))
         {
             try
             {
-                using var doc = JsonDocument.Parse(trimmed);
+                using var doc = JsonDocument.Parse(trimmed.ToString());
                 return SnapshotJson(doc.RootElement, depth + 1, limit, ref budget);
             }
             catch
@@ -292,7 +292,7 @@ internal static class TraceValue
     /// <summary>
     /// Cached public instance property arrays per type to avoid repeated reflection.
     /// </summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, PropertyInfo[]> PropertyCache = new();
+    private static readonly ConditionalWeakTable<Type, PropertyInfo[]> PropertyCache = new();
 
     /// <summary>
     /// Captures object properties using reflection with exception protection.
@@ -307,7 +307,7 @@ internal static class TraceValue
         var valueType = value.GetType();
         if (valueType.Namespace?.StartsWith("FileHandler.Api", StringComparison.Ordinal) != true && !valueType.IsDefined(typeof(CompilerGeneratedAttribute)))
             return valueType.Name;
-        var props = PropertyCache.GetOrAdd(valueType, t =>
+        var props = PropertyCache.GetValue(valueType, static t =>
             t.GetProperties(BindingFlags.Instance | BindingFlags.Public)
              .Where(p => p.GetIndexParameters().Length == 0)
              .Take(20).ToArray());

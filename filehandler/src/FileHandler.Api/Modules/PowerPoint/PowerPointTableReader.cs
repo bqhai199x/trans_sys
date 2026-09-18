@@ -38,8 +38,9 @@ public sealed class PowerPointTableReader
                 // Skip horizontal or vertical merge continuation cells
                 if (cell.HorizontalMerge?.Value == true || cell.VerticalMerge?.Value == true)
                 {
-                    if (cell.TextBody is null || !HasNonEmptyText(cell.TextBody))
-                        continue;
+                    if (cell.TextBody is not null && HasNonEmptyText(cell.TextBody))
+                        throw new InvalidOperationException("Merged continuation with text is unsupported.");
+                    continue;
                 }
 
                 if (cell.TextBody is null)

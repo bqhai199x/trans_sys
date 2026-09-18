@@ -148,6 +148,26 @@ internal static class OfficeTextBindings
     }
 
     /// <summary>
+    /// Groups exact scalar expectations in one pass over changed units.
+    /// </summary>
+    /// <param name="units">Original ordered units.</param>
+    /// <param name="decoded">Validated translations.</param>
+    /// <returns>Editable part maps; shared strings are handled by copy-on-write.</returns>
+    internal static Dictionary<string, Dictionary<string, OfficeScalarEdit>> EditsByPart(IReadOnlyList<OfficeTranslationUnit> units, IReadOnlyList<OfficeDecodedUnit> decoded)
+    {
+        var parts = new Dictionary<string, Dictionary<string, OfficeScalarEdit>>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < units.Count; i++)
+        {
+            var unit = units[i];
+            if (!Changed(unit, decoded[i])) continue;
+            var uri = unit.Location.PartUri;
+            if (!parts.TryGetValue(uri, out var edits)) parts[uri] = edits = new(StringComparer.Ordinal);
+            foreach (var edit in BuildChanges(unit, decoded[i], uri)) edits.Add(edit.Key, edit.Value);
+        }
+        return parts;
+    }
+
+    /// <summary>
     /// Composes all changed spans per scalar while preserving unbound source characters.
     /// </summary>
     /// <param name="unit">Bound source unit.</param>

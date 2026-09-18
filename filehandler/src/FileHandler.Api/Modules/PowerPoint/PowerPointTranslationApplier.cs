@@ -30,8 +30,9 @@ public sealed class PowerPointTranslationApplier
                 masks[uri] = new OfficeEditMask(uri, new[] { "//a:t" });
             }
         }
+        var editsByPart = OfficeTextBindings.EditsByPart(plan.Units, decodedUnits);
         foreach (var uri in masks.Keys.ToArray())
-            masks[uri] = masks[uri] with { ScalarEdits = OfficeTextBindings.Edits(plan.Units, decodedUnits, uri) };
+            masks[uri] = masks[uri] with { ScalarEdits = editsByPart[uri] };
         return new(plan, decodedUnits, masks);
     }
 

@@ -42,31 +42,22 @@ public sealed class ExcelStructureValidator
             if (doc.WorkbookPart?.Workbook?.Sheets is null)
                 return OfficeValidationResult.Failure(new[] { new FileError("office_output_invalid", "Sổ tính Excel đầu ra thiếu phần bảng tính.") });
 
-            // Validate table column names are preserved
-            foreach (var expectedTable in plan.Tables)
+            var tables = new Dictionary<(string Part, string Name), S.Table>();
+            foreach (var worksheet in doc.WorkbookPart.WorksheetParts)
+                foreach (var part in worksheet.TableDefinitionParts)
+                {
+                    if (part.Table is not { } table) continue;
+                    foreach (var name in new[] { table.DisplayName?.Value, table.Name?.Value }.OfType<string>().Distinct())
+                        if (!tables.TryAdd((worksheet.Uri.ToString(), name), table))
+                            return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Duplicate table identifier.")]);
+                }
+            foreach (var expected in plan.Tables)
             {
-                var found = false;
-                foreach (var wsPart in doc.WorkbookPart.WorksheetParts)
-                {
-                    foreach (var tblPart in wsPart.TableDefinitionParts)
-                    {
-                        var tbl = tblPart.Table;
-                        if (tbl?.DisplayName?.Value == expectedTable.TableName || tbl?.Name?.Value == expectedTable.TableName)
-                        {
-                            found = true;
-                            var colNames = tbl.TableColumns?.Elements<S.TableColumn>().Select(c => c.Name?.Value).ToList() ?? new List<string?>();
-                            if (!colNames.SequenceEqual(expectedTable.ColumnNames))
-                            {
-                                return OfficeValidationResult.Failure(new[] { new FileError("office_output_invalid", $"Tên cột trong bảng '{expectedTable.TableName}' bị thay đổi ngoài ý muốn.") });
-                            }
-                        }
-                    }
-                }
-
-                if (!found && expectedTable.ColumnNames.Count > 0)
-                {
-                    return OfficeValidationResult.Failure(new[] { new FileError("office_output_invalid", $"Bảng '{expectedTable.TableName}' bị thiếu trong tài liệu đầu ra.") });
-                }
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!tables.TryGetValue((expected.PartUri, expected.TableName), out var table) ||
+                    !(table.TableColumns?.Elements<S.TableColumn>().Select(c => c.Name?.Value) ?? [])
+                        .SequenceEqual(expected.ColumnNames))
+                    return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Table definition changed.")]);
             }
 
             trace.Return(new { outcome = "success", validatedTables = plan.Tables.Count });

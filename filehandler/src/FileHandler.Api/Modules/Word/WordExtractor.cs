@@ -68,7 +68,7 @@ public sealed class WordExtractor : IWordExtractor
             // Check for unsupported objects in entire package
             CheckForUnsupportedElements(doc);
 
-            var units = new OfficeUnitCollection(_options);
+            var units = new OfficeUnitCollection(_options, _codec.MaxUnits);
             var stories = new List<WordStorySnapshot>();
             var tables = new List<WordTableSnapshot>();
 
@@ -329,8 +329,14 @@ public sealed class WordExtractor : IWordExtractor
             foreach (var cell in row.Elements<W.TableCell>())
             {
                 // If continuation cell with no text or cell has no non-empty text: do not process
-                if (WordTableReader.IsVerticalMergeContinuation(cell) && !WordTableReader.HasNonEmptyText(cell))
+                var horizontal = cell.TableCellProperties?.HorizontalMerge;
+                if (WordTableReader.IsVerticalMergeContinuation(cell) ||
+                    horizontal is not null && (horizontal.Val is null || horizontal.Val.Value == W.MergedCellValues.Continue))
+                {
+                    if (WordTableReader.HasNonEmptyText(cell))
+                        throw new InvalidOperationException("Merged continuation with text is unsupported.");
                     continue;
+                }
 
 
                 WalkContainerElements(cell, partUri, partRoot, units, tables, cancellationToken);

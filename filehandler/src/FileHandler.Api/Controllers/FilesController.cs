@@ -18,6 +18,7 @@ namespace FileHandler.Api.Controllers;
 [ApiController]
 [Route("")]
 [Traceable]
+[Microsoft.AspNetCore.RateLimiting.EnableRateLimiting("file-processing")]
 public sealed class FilesController : ControllerBase
 {
 

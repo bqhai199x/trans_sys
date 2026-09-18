@@ -57,12 +57,13 @@ public sealed class ExcelTranslationApplier
 
             trace.State("stage", () => "buildEditMask");
             var masks = new Dictionary<string, OfficeEditMask>(StringComparer.OrdinalIgnoreCase);
+            var editsByPart = OfficeTextBindings.EditsByPart(plan.Units, decodedUnits);
             var unitParts = plan.Units.Select(u => u.Location.PartUri).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var partUri in touchedParts)
             {
                 masks[partUri] = new OfficeEditMask(partUri, new[] { "//x:t", "//x:v", "//x:si", "//a:t" }, SstOptionalCountersRemoved: true);
                 if (unitParts.Contains(partUri))
-                    masks[partUri] = masks[partUri] with { ScalarEdits = OfficeTextBindings.Edits(plan.Units, decodedUnits, partUri) };
+                    masks[partUri] = masks[partUri] with { ScalarEdits = editsByPart[partUri] };
             }
 
             trace.Return(new { outcome = "success", touchedPartsCount = touchedParts.Count });
@@ -115,8 +116,8 @@ public sealed class ExcelTranslationApplier
                 wp => "/" + wp.Uri.ToString().TrimStart('/'),
                 StringComparer.OrdinalIgnoreCase);
 
-            var cellsByPart = worksheetPartsByUri.ToDictionary(p => p.Key,
-                p => p.Value.Worksheet!.Descendants<Cell>().ToDictionary(c => c.CellReference!.Value!, StringComparer.Ordinal),
+            var cellsByPart = worksheetPartsByUri.Where(p => patch.EditMasks.ContainsKey(p.Key)).ToDictionary(p => p.Key,
+                p => p.Value.Worksheet!.Descendants<Cell>().ToDictionary(c => c.CellReference?.Value ?? throw new InvalidDataException("Implicit cell address is unsupported in selected worksheet."), StringComparer.Ordinal),
                 StringComparer.OrdinalIgnoreCase);
             var drawingParts = workbookPart.WorksheetParts.Select(w => w.DrawingsPart).OfType<DrawingsPart>()
                 .Distinct().ToDictionary(p => "/" + p.Uri.ToString().TrimStart('/'), StringComparer.OrdinalIgnoreCase);

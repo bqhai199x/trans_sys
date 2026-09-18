@@ -69,7 +69,8 @@ public sealed class ExcelExtractor : IExcelExtractor
             var sstPart = doc.WorkbookPart.SharedStringTablePart;
             var sstItems = sstPart?.SharedStringTable?.Elements<SharedStringItem>().ToList();
 
-            var units = new OfficeUnitCollection(_options);
+            var templates = new Dictionary<OpenXmlElement, (OfficeTextTemplate Template, string Encoded, string Hash)>(ReferenceEqualityComparer.Instance);
+            var units = new OfficeUnitCollection(_options, _codec.MaxUnits);
             var sheets = new List<ExcelSheetSnapshot>();
             var allTables = new List<ExcelTableSnapshot>();
 
@@ -126,6 +127,7 @@ public sealed class ExcelExtractor : IExcelExtractor
 
                 var sheetTables = _tableReader.ReadTables(worksheetPart, partUri);
                 allTables.AddRange(sheetTables);
+                var protectedCells = new ExcelProtectedCellIndex(sheetTables);
 
                 trace.State("stage", () => "walkCells");
                 var sheetUnitsBefore = units.Count;
@@ -178,38 +180,42 @@ public sealed class ExcelExtractor : IExcelExtractor
                         if (hiddenColumns[columnNumber]) continue;
 
                         // Check if protected table identifier
-                        if (ExcelTableReader.IsProtectedTableIdentifier(cellRef, sheetTables))
+                        if (protectedCells.Contains(columnNumber, rowNumber))
                             continue;
 
-                        var cellText = ExcelCellResolver.ResolveCellString(cell, sstItems, out var runs);
-                        if (cellText is null || string.IsNullOrWhiteSpace(cellText))
-                            continue;
+                        if (ExcelCellResolver.HasFormula(cell)) continue;
+                        OpenXmlElement? payload = null;
+                        var shared = cell.DataType?.Value == CellValues.SharedString;
+                        if (shared)
+                        {
+                            if (!int.TryParse(cell.CellValue?.Text, out var index) || sstItems is null || index < 0 || index >= sstItems.Count)
+                                throw new InvalidDataException("Invalid shared string reference.");
+                            payload = sstItems[index];
+                        }
+                        else if (cell.DataType?.Value == CellValues.InlineString) payload = cell.InlineString;
+                        if (payload is null) continue;
+                        if (!templates.TryGetValue(payload, out var cached))
+                        {
+                            var cellText = payload.InnerText;
+                            if (string.IsNullOrWhiteSpace(cellText)) continue;
+                            if (payload.Descendants<S.PhoneticRun>().Any() || payload.Descendants<S.PhoneticProperties>().Any())
+                                throw new InvalidOperationException("Phonetic strings are unsupported.");
+                            var builder = new OfficeTemplateBuilder(_options);
+                            foreach (var text in payload.Descendants<S.Text>())
+                                builder.Text(text, shared ? "/" + sstPart!.Uri.ToString().TrimStart('/') : partUri,
+                                    text.Parent is S.Run run ? run.RunProperties?.OuterXml ?? "" : "");
+                            var built = builder.Build()!;
+                            cached = (built, _codec.Encode(built), Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(cellText))));
+                            if (shared) templates.Add(payload, cached);
+                        }
                         if (mergedCells.IsFollower(columnNumber, rowNumber))
                             throw new InvalidOperationException("Merged follower contains text outside visible merge owner.");
-
-                        var unitId = OfficeIdentity.CreateUnitId(
-                            "office-v1",
-                            string.Empty,
-                            OfficeFormat.Excel,
-                            partUri,
-                            OfficeObjectKind.SpreadsheetCell,
-                            Array.Empty<OfficeElementPathSegment>(),
-                            units.Count);
-
+                        var unitId = OfficeIdentity.CreateUnitId("office-v1", string.Empty, OfficeFormat.Excel,
+                            partUri, OfficeObjectKind.SpreadsheetCell, Array.Empty<OfficeElementPathSegment>(), units.Count);
                         var loc = new OfficeLocation(partUri, Array.Empty<OfficeElementPathSegment>(), CellReference: cellRef);
-
-                        var payload = cell.DataType?.Value == CellValues.SharedString
-                            ? (OpenXmlElement)sstItems![int.Parse(cell.CellValue!.Text)]
-                            : cell.InlineString!;
-                        if (payload.Descendants<S.PhoneticRun>().Any() || payload.Descendants<S.PhoneticProperties>().Any())
-                            throw new InvalidOperationException("Phonetic strings are unsupported.");
-                        var builder = new OfficeTemplateBuilder(_options);
-                        foreach (var text in payload.Descendants<S.Text>())
-                            builder.Text(text, cell.DataType?.Value == CellValues.SharedString ? "/" + sstPart!.Uri.ToString().TrimStart('/') : partUri, text.Parent is S.Run run ? run.RunProperties?.OuterXml ?? "" : "");
-                        var template = builder.Build()!;
-
-                        var encodedSource = _codec.Encode(template);
-                        var plainHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(cellText)));
+                        var template = cached.Template;
+                        var encodedSource = cached.Encoded;
+                        var plainHash = cached.Hash;
 
                         var unit = new OfficeTranslationUnit(
                             units.Count,

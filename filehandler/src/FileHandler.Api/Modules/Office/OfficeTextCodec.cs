@@ -21,6 +21,11 @@ public sealed class OfficeTextCodec
     private readonly FileHandlingOptions _fileHandlingOptions;
 
     /// <summary>
+    /// Maximum extraction units permitted by file policy.
+    /// </summary>
+    internal int MaxUnits => _fileHandlingOptions.MaxUnits;
+
+    /// <summary>
     /// Creates text codec instance.
     /// </summary>
     /// <param name="options">Active Office processing options.</param>
@@ -377,7 +382,7 @@ public sealed class OfficeTextCodec
                     else if (input[pos] == '<')
                     {
                         // Check if it's the closing tag
-                        if (pos + closingTag.Length <= len && input.Substring(pos, closingTag.Length) == closingTag)
+                        if (input.AsSpan(pos).StartsWith(closingTag, StringComparison.Ordinal))
                         {
                             pos += closingTag.Length;
                             closed = true;

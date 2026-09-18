@@ -65,7 +65,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
             if (doc.PresentationPart?.Presentation?.SlideIdList is null)
                 throw new InvalidOperationException("PowerPoint package missing presentation or slide list.");
 
-            var units = new OfficeUnitCollection(_options);
+            var units = new OfficeUnitCollection(_options, _codec.MaxUnits);
             var slides = new List<PowerPointSlideSnapshot>();
 
             trace.State("stage", () => "walkShapes");

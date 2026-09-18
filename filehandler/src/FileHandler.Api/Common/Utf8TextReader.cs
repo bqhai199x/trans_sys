@@ -13,7 +13,7 @@ internal static class Utf8TextReader
     /// <summary>
     /// Buffer size in bytes for source reads.
     /// </summary>
-    private const int RentBufferSize = 81920;
+    private const int RentBufferSize = 65536;
 
     /// <summary>
     /// UTF-8 codec rejecting malformed Unicode.
@@ -37,7 +37,7 @@ internal static class Utf8TextReader
                 using var output = new MemoryStream();
                 while (true)
                 {
-                    var read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken);
+                    var read = await stream.ReadAsync(buffer.AsMemory(0, RentBufferSize), cancellationToken);
                     if (read == 0)
                         break;
                     if (output.Length + read > maxBytes)
@@ -64,7 +64,7 @@ internal static class Utf8TextReader
             }
             finally
             {
-                ArrayPool<byte>.Shared.Return(buffer);
+                ArrayPool<byte>.Shared.Return(buffer, clearArray: true);
             }
         });
 

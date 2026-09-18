@@ -99,6 +99,21 @@ builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddOptions<FormOptions>().Configure<IOptions<FileHandlingOptions>>((form, configured) =>
     form.MultipartBodyLengthLimit = configured.Value.MaxMultipartBytes);
 
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy("file-processing", context => System.Threading.RateLimiting.RateLimitPartition.GetConcurrencyLimiter(
+        "file-processing", _ => new System.Threading.RateLimiting.ConcurrencyLimiterOptions
+        {
+            PermitLimit = Math.Clamp(context.RequestServices.GetRequiredService<IOptions<FileHandlingOptions>>().Value.MaxConcurrentRequests, 1, 64),
+            QueueLimit = 0
+        }));
+    options.OnRejected = async (context, token) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        await context.HttpContext.Response.WriteAsJsonAsync(new[] { new FileError("request_limit_exceeded", "File processing capacity reached; retry later.") }, token);
+    };
+});
+
 var app = builder.Build();
 app.UseMiddleware<DebugTraceMiddleware>();
 app.UseExceptionHandler();
@@ -139,6 +154,8 @@ app.Use(async (context, next) =>
     await next();
 });
 app.UseDefaultFiles();
+app.UseRouting();
+app.UseRateLimiter();
 app.UseStaticFiles();
 app.UseSwagger();
 app.UseSwaggerUI(options =>

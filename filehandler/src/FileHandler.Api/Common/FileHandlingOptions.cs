@@ -27,6 +27,11 @@ public sealed class FileHandlingOptions
     public int MaxUnits { get; set; } = 10_000;
 
     /// <summary>
+    /// Maximum simultaneous import/export HTTP requests per process, clamped to 1–64.
+    /// </summary>
+    public int MaxConcurrentRequests { get; set; } = 8;
+
+    /// <summary>
     /// Maximum character count per translation.
     /// </summary>
     public int MaxTranslationChars { get; set; } = 100_000;

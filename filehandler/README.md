@@ -156,7 +156,7 @@ Hỗ trợ tài liệu Microsoft Word (`.docx`), Excel (`.xlsx`) và PowerPoint 
   - Bỏ qua sheet ẩn (`Hidden`, `VeryHidden`), hàng và cột ẩn. Workbook có `Chartsheet` ngoài profile hiện tại bị từ chối.
   - Bỏ qua ô công thức, ô số, ô ngày tháng, boolean và error.
   - Bảo vệ tiêu đề bảng Excel (`Table` / `ListObject`): các ô thuộc header row và `TableColumn.Name` được giữ nguyên, không trích xuất unit.
-  - Quản lý Shared String Table (SST): giải chỉ mục, tạo mới SST sạch cho bản dịch, tự động loại bỏ các thuộc tính bộ đếm tùy chọn (`count`, `uniqueCount`) theo đặc tả OpenXML.
+  - Quản lý Shared String Table (SST): giữ nguyên các mục và chỉ mục cũ, thêm mục mới cho ô được dịch; sheet ẩn và ô công thức tiếp tục tham chiếu nội dung cũ. Loại bỏ thuộc tính bộ đếm tùy chọn (`count`, `uniqueCount`) khi cập nhật SST.
 
 - **PowerPoint (.pptx)**:
   - Trích xuất văn bản trong slide shapes (`p:sp`) và bảng DrawingML (`a:tbl`).
@@ -171,6 +171,9 @@ Hỗ trợ tài liệu Microsoft Word (`.docx`), Excel (`.xlsx`) và PowerPoint 
 
 ## Giới hạn mặc định
 
+- Tối đa 8 request import/export đồng thời trong mỗi process (`FileHandling:MaxConcurrentRequests`, được chặn trong khoảng 1–64). Không xếp hàng; hết suất trả HTTP 429 với `request_limit_exceeded` trước khi đọc multipart. Cấu hình theo ngân sách bộ nhớ thực tế; giới hạn này không thay thế giới hạn toàn cụm tại proxy.
+- Office: tối đa 100.000 binding trên toàn bộ unit (`MaxBindings`, tính cả tham chiếu SST lặp) và 256 thuộc tính mỗi XML element (`MaxAttributesPerElement`). Vượt quota trả HTTP 413. File nhiều cấu trúc nhỏ có thể bị từ chối dù ZIP nhỏ.
+- Word/PPT từ chối continuation cell của merge nếu còn văn bản (HTTP 422), tránh sửa nhầm ô không sở hữu nội dung. Excel bảo toàn sheet ẩn có ô thiếu địa chỉ; ô thiếu địa chỉ trong worksheet được chọn sửa vẫn ngoài profile hỗ trợ (HTTP 422).
 - File nguồn: 5 MiB (Office: 50 MiB); multipart: 25 MiB; output: 20 MiB.
 - 10.000 unit/tệp; 100.000 UTF-16 code unit/bản dịch.
 - Cấu hình chung trong `FileHandling` và giới hạn gói Office trong `OfficeProcessing` của `appsettings.json`.

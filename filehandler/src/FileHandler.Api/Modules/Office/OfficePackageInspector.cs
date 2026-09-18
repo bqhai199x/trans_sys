@@ -91,10 +91,13 @@ public sealed class OfficePackageInspector
                 var ownerPartUri = DetermineOwnerPartUri(name);
                 using var relStream = entry.Open();
                 var relDoc = new XmlDocument { XmlResolver = null };
-                relDoc.Load(relStream);
+                using var relReader = XmlReader.Create(relStream, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = _options.MaxXmlCharactersPerPart });
+                relDoc.Load(relReader);
 
-                foreach (XmlNode node in relDoc.GetElementsByTagName("Relationship"))
+                foreach (XmlNode node in relDoc.GetElementsByTagName("Relationship", "http://schemas.openxmlformats.org/package/2006/relationships"))
                 {
+                    if (node.ParentNode != relDoc.DocumentElement) throw new InvalidDataException("Nested relationship is unsupported.");
+                    cancellationToken.ThrowIfCancellationRequested();
                     var id = node.Attributes?["Id"]?.Value;
                     var type = node.Attributes?["Type"]?.Value;
                     var target = node.Attributes?["Target"]?.Value;
@@ -153,7 +156,7 @@ public sealed class OfficePackageInspector
     /// </summary>
     /// <param name="zip">ZIP archive.</param>
     /// <returns>Pair of default extension mappings and override part mappings.</returns>
-    private static (Dictionary<string, string> Defaults, Dictionary<string, string> Overrides) ParseContentTypes(ZipArchive zip)
+    private (Dictionary<string, string> Defaults, Dictionary<string, string> Overrides) ParseContentTypes(ZipArchive zip)
     {
         var defaults = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var overrides = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -164,9 +167,10 @@ public sealed class OfficePackageInspector
 
         using var s = entry.Open();
         var doc = new XmlDocument { XmlResolver = null };
-        doc.Load(s);
+        using var reader = XmlReader.Create(s, new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = _options.MaxXmlCharactersPerPart });
+        doc.Load(reader);
 
-        foreach (XmlNode node in doc.GetElementsByTagName("Default"))
+        foreach (XmlNode node in doc.GetElementsByTagName("Default", "http://schemas.openxmlformats.org/package/2006/content-types"))
         {
             var ext = node.Attributes?["Extension"]?.Value;
             var ct = node.Attributes?["ContentType"]?.Value;
@@ -174,7 +178,7 @@ public sealed class OfficePackageInspector
                 defaults[ext] = ct;
         }
 
-        foreach (XmlNode node in doc.GetElementsByTagName("Override"))
+        foreach (XmlNode node in doc.GetElementsByTagName("Override", "http://schemas.openxmlformats.org/package/2006/content-types"))
         {
             var partName = node.Attributes?["PartName"]?.Value;
             var ct = node.Attributes?["ContentType"]?.Value;

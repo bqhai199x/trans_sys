@@ -37,7 +37,7 @@ public static class ExcelCellResolver
         if (i == 0 || i >= cellReference.Length)
             return false;
 
-        return int.TryParse(cellReference[i..], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out rowNumber) && rowNumber is > 0 and <= 1048576 && columnNumber > 0;
+        return int.TryParse(cellReference.AsSpan(i), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out rowNumber) && rowNumber is > 0 and <= 1048576 && columnNumber > 0;
     }
 
     /// <summary>

@@ -20,10 +20,25 @@ internal sealed class OfficeUnitCollection : Collection<OfficeTranslationUnit>, 
     private long _characters;
 
     /// <summary>
+    /// Maximum units permitted before retaining another unit.
+    /// </summary>
+    private readonly int _maxUnits;
+
+    /// <summary>
+    /// Aggregate binding references representing downstream patch work.
+    /// </summary>
+    private long _bindings;
+
+    /// <summary>
     /// Creates an empty bounded plan collection.
     /// </summary>
     /// <param name="options">Active extraction budgets.</param>
-    internal OfficeUnitCollection(OfficeProcessingOptions options) => _options = options;
+    /// <param name="maxUnits">General file unit limit.</param>
+    internal OfficeUnitCollection(OfficeProcessingOptions options, int maxUnits = int.MaxValue)
+    {
+        _options = options;
+        _maxUnits = maxUnits;
+    }
 
     /// <summary>
     /// Checks unit, token and character budgets before retaining a unit.
@@ -33,10 +48,13 @@ internal sealed class OfficeUnitCollection : Collection<OfficeTranslationUnit>, 
     /// <returns>No return value.</returns>
     protected override void InsertItem(int index, OfficeTranslationUnit item)
     {
+        if (Count >= _maxUnits) throw new FileLimitException("too_many_units");
         if (Count >= _options.MaxObjects || item.Slots.Count + item.Anchors.Count > _options.MaxTokensPerUnit ||
-            item.EncodedSource.Length > _options.MaxPlanChars - _characters)
+            item.EncodedSource.Length > _options.MaxPlanChars - _characters ||
+            item.Bindings.Count > _options.MaxBindings - _bindings)
             throw new FileLimitException("office_plan_limit_exceeded");
         _characters += item.EncodedSource.Length;
+        _bindings += item.Bindings.Count;
         base.InsertItem(index, item);
     }
 }

@@ -125,6 +125,7 @@ internal sealed class OfficeTemplateBuilder
         _merge = true;
         if (!_scalarHashes.TryGetValue(node, out var sourceHash))
             _scalarHashes[node] = sourceHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(node.Text)));
+        if (_bindings.Count >= _limits.MaxBindings) throw new FileHandler.Api.Common.FileLimitException("office_plan_limit_exceeded");
         _bindings.Add(new(partUri, new OfficeLocation(partUri, OfficeTextBindings.Path(node)), node.LocalName,
             sourceHash, offset, length, slotId, node.Text));
     }
@@ -162,5 +163,5 @@ internal sealed class OfficeTemplateBuilder
     /// <returns>Ordered template, or null for protected-only content.</returns>
     internal OfficeTextTemplate? Build() => _slots.Count == 0 ? null : new(
         _slots.Count == 1 && _anchors.Count == 0 ? UnitMode.Plain : UnitMode.Structured,
-        _slots.Select((slot, index) => slot with { OriginalText = _texts[index].ToString() }).ToArray(), _anchors, _bindings, _order);
+        _slots.Select((slot, index) => slot with { OriginalText = _texts[index].ToString() }).ToArray(), _anchors.ToArray(), _bindings.ToArray(), _order.ToArray());
 }

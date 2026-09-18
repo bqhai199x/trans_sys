@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -134,6 +135,7 @@ public sealed class OfficePackageReader
                 byte[]? contentTypesBytes = null;
                 var normalizedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 long totalExpandedBytes = 0;
+                long actualExpandedBytes = 0;
                 var entryIndex = 0;
                 string? mainContentType = null;
                 var hasContentTypes = false;
@@ -150,13 +152,14 @@ public sealed class OfficePackageReader
                     entryItem.State("entry", () => new { uri = entry.FullName, compressedSize = entry.Length, uncompressedSize = entry.Length });
 
                     var rawName = entry.FullName;
-                    if (rawName.StartsWith('/') || rawName.StartsWith('\\') || rawName.Contains("../") || rawName.Contains("..\\") || rawName.EndsWith('/'))
+                    var pathSegments = rawName.TrimEnd('/').Split('/');
+                    if (rawName.StartsWith('/') || rawName.Contains('\\') || pathSegments.Any(segment =>
                     {
-                        if (rawName.EndsWith('/'))
-                            continue; // Directory entry
-                        trace.Return(new { outcome = "failed", code = "invalid_office_package" });
-                        return OfficeReadResult.Failure(new[] { new FileError("invalid_office_package", $"Đường dẫn tệp con không an toàn hoặc chứa ký tự cấm: {rawName}.") });
-                    }
+                        var decoded = Uri.UnescapeDataString(segment);
+                        return decoded.Length == 0 || decoded is "." or ".." || decoded.IndexOfAny(['/', '\\', ':']) >= 0;
+                    }))
+                        return OfficeReadResult.Failure([new FileError("invalid_office_package", "Unsafe package entry path.")]);
+                    if (rawName.EndsWith('/')) continue;
 
                     var normalized = rawName.Replace('\\', '/').TrimStart('/');
                     if (!normalizedPaths.Add(normalized))
@@ -178,34 +181,24 @@ public sealed class OfficePackageReader
                         return OfficeReadResult.Failure(new[] { new FileError("office_package_limit_exceeded", $"Tổng kích thước giải nén ({totalExpandedBytes} bytes) vượt quá giới hạn ({_options.MaxExpandedBytes} bytes).") });
                     }
 
-                    // Decompress entry into memory and verify CRC32
-                    byte[] entryBytes;
+                    var retain = string.Equals(normalized, "[Content_Types].xml", StringComparison.OrdinalIgnoreCase);
                     try
                     {
-                        using (var entryStream = entry.Open())
-                        using (var entryMs = new MemoryStream())
+                        using var entryStream = entry.Open();
+                        var scanned = await ScanEntryAsync(entryStream, Math.Min(_options.MaxPartBytes,
+                            _options.MaxExpandedBytes - actualExpandedBytes), retain, cancellationToken).ConfigureAwait(false);
+                        actualExpandedBytes += scanned.Bytes;
+                        if (scanned.Bytes != entry.Length || scanned.Crc != entry.Crc32)
+                            return OfficeReadResult.Failure([new FileError("invalid_office_package", "Entry length or CRC mismatch.")]);
+                        if (retain)
                         {
-                            await entryStream.CopyToAsync(entryMs, cancellationToken).ConfigureAwait(false);
-                            entryBytes = entryMs.ToArray();
+                            hasContentTypes = true;
+                            contentTypesBytes = scanned.Content;
                         }
                     }
                     catch (Exception ex) when (ex is InvalidDataException or IOException)
                     {
-                        trace.Return(new { outcome = "failed", code = "invalid_office_package" });
-                        return OfficeReadResult.Failure(new[] { new FileError("invalid_office_package", $"Tệp ZIP hoặc phần tử nén {normalized} bị hỏng.") });
-                    }
-
-                    var computedCrc = ComputeCrc32(entryBytes);
-                    if (computedCrc != entry.Crc32)
-                    {
-                        trace.Return(new { outcome = "failed", code = "invalid_office_package" });
-                        return OfficeReadResult.Failure(new[] { new FileError("invalid_office_package", $"Mã kiểm tra CRC-32 của tệp con {normalized} không khớp.") });
-                    }
-
-                    if (string.Equals(normalized, "[Content_Types].xml", StringComparison.OrdinalIgnoreCase))
-                    {
-                        hasContentTypes = true;
-                        contentTypesBytes = entryBytes;
+                        return OfficeReadResult.Failure([new FileError("invalid_office_package", "Invalid compressed entry.")]);
                     }
 
                     if (string.Equals(normalized, "_rels/.rels", StringComparison.OrdinalIgnoreCase))
@@ -249,6 +242,8 @@ public sealed class OfficePackageReader
                     while (typesReader.Read())
                     {
                         cancellationToken.ThrowIfCancellationRequested();
+                        if (typesReader.AttributeCount > _options.MaxAttributesPerElement)
+                            throw new FileLimitException("office_package_limit_exceeded");
                         var mime = typesReader.GetAttribute("ContentType");
                         if (mime is null || !(mime.EndsWith("+xml", StringComparison.OrdinalIgnoreCase) ||
                             mime.Equals("application/xml", StringComparison.OrdinalIgnoreCase) ||
@@ -281,6 +276,7 @@ public sealed class OfficePackageReader
                         while (xmlReader.Read())
                         {
                             cancellationToken.ThrowIfCancellationRequested();
+                            if (xmlReader.AttributeCount > _options.MaxAttributesPerElement) throw new FileLimitException("office_package_limit_exceeded");
                             nodeCount++;
                             totalXmlNodes++;
                             if (xmlReader.Depth > maxDepth)
@@ -329,7 +325,8 @@ public sealed class OfficePackageReader
                 using (var ctStream = new MemoryStream(contentTypesBytes!))
                 {
                     var ctDoc = new XmlDocument { XmlResolver = null };
-                    ctDoc.Load(ctStream);
+                    using var ctReader = XmlReader.Create(ctStream, xmlReaderSettings);
+                    ctDoc.Load(ctReader);
                     var nsmgr = new XmlNamespaceManager(ctDoc.NameTable);
                     nsmgr.AddNamespace("ct", "http://schemas.openxmlformats.org/package/2006/content-types");
                     var overrideNodes = ctDoc.SelectNodes("//ct:Override", nsmgr);
@@ -413,4 +410,36 @@ public sealed class OfficePackageReader
             throw;
         }
     }
+
+    /// <summary>
+    /// Streams CRC and actual byte accounting, retaining only required metadata.
+    /// </summary>
+    /// <param name="input">Decompressed entry stream.</param>
+    /// <param name="limit">Remaining expanded byte budget.</param>
+    /// <param name="retain">Whether metadata bytes must be retained.</param>
+    /// <param name="token">Cancellation token.</param>
+    /// <returns>Checksum, actual size, and optional metadata bytes.</returns>
+    private static async Task<(uint Crc, long Bytes, byte[]? Content)> ScanEntryAsync(Stream input, long limit, bool retain, CancellationToken token)
+    {
+        var buffer = ArrayPool<byte>.Shared.Rent(65536);
+        using var metadata = retain ? new MemoryStream() : null;
+        long total = 0;
+        uint crc = uint.MaxValue;
+        try
+        {
+            while (true)
+            {
+                var remaining = limit - total;
+                var wanted = remaining >= 65536 ? 65536 : (int)remaining + 1;
+                var read = await input.ReadAsync(buffer.AsMemory(0, wanted), token).ConfigureAwait(false);
+                if (read == 0) return (crc ^ uint.MaxValue, total, metadata?.ToArray());
+                if (read > remaining) throw new FileLimitException("office_package_limit_exceeded");
+                total += read;
+                for (var i = 0; i < read; i++) crc = (crc >> 8) ^ CrcTable[(crc ^ buffer[i]) & 0xff];
+                metadata?.Write(buffer, 0, read);
+            }
+        }
+        finally { ArrayPool<byte>.Shared.Return(buffer, clearArray: true); }
+    }
+
 }
