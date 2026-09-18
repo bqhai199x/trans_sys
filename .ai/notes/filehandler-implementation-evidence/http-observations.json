@@ -1,0 +1,26 @@
+[
+  {
+    "path": "/import",
+    "chunked": false,
+    "requestBytes": 5453,
+    "response": "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Type: application/json; charset=utf-8\r\nDate: Thu, 17 Sep 2026 12:54:17 GMT\r\nServer: Kestrel\r\nTransfer-Encoding: chunked\r\n\r\n87\r\n[{\"code\":\"file_too_large\",\"message\":\"Kích thước multipart request (5453 bytes) vượt quá giới hạn cho phép (4096 bytes).\"}]\r\n0\r\n\r\n"
+  },
+  {
+    "path": "/import",
+    "chunked": true,
+    "requestBytes": 5453,
+    "response": "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Type: application/json; charset=utf-8\r\nDate: Thu, 17 Sep 2026 12:54:17 GMT\r\nServer: Kestrel\r\nTransfer-Encoding: chunked\r\n\r\n6d\r\n[{\"code\":\"file_too_large\",\"message\":\"Kích thước multipart request vượt quá giới hạn cho phép.\"}]\r\n0\r\n\r\n"
+  },
+  {
+    "path": "/export",
+    "chunked": false,
+    "requestBytes": 1398,
+    "response": "HTTP/1.1 413 Payload Too Large\r\nConnection: close\r\nContent-Type: application/json; charset=utf-8\r\nDate: Thu, 17 Sep 2026 12:54:18 GMT\r\nServer: Kestrel\r\nTransfer-Encoding: chunked\r\n\r\n4d\r\n[{\"code\":\"output_too_large\",\"message\":\"Configured resource limit exceeded.\"}]\r\n0\r\n\r\n"
+  },
+  {
+    "path": "/export",
+    "chunked": false,
+    "requestBytes": 1284,
+    "response": "HTTP/1.1 422 Unprocessable Entity\r\nConnection: close\r\nContent-Type: application/json; charset=utf-8\r\nDate: Thu, 17 Sep 2026 12:54:18 GMT\r\nServer: Kestrel\r\nTransfer-Encoding: chunked\r\n\r\n5a\r\n[{\"code\":\"invalid_office_package\",\"message\":\"Cấu trúc gói Office không hợp lệ.\"}]\r\n0\r\n\r\n"
+  }
+]

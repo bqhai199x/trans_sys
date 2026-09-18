@@ -1,0 +1,70 @@
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://127.0.0.1:5129
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Production
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: D:\Projects\trans_sys\filehandler\src\FileHandler.Api
+fail: GlobalExceptionHandler[0]
+      Unhandled file handling failure (request content omitted).
+      System.InvalidOperationException: Write operation would exceed maximum byte limit (100).
+         at FileHandler.Api.Modules.Office.OfficeBoundedStream.Write(ReadOnlySpan`1 buffer) in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Modules\Office\OfficeBoundedStream.cs:line 137
+         at System.IO.Compression.ZipArchiveEntry.WriteCentralDirectoryFileHeader(Boolean forceWrite)
+         at System.IO.Compression.ZipArchive.WriteFile()
+         at System.IO.Compression.ZipArchive.Dispose(Boolean disposing)
+         at FileHandler.Api.Modules.Office.OfficeExportSession.FinalizeAsync(CancellationToken cancellationToken) in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Modules\Office\OfficeExportSession.cs:line 158
+         at FileHandler.Api.Modules.Word.WordService.ExportAsync(Stream stream, IReadOnlyList`1 translations, CancellationToken cancellationToken) in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Modules\Word\WordService.cs:line 288
+         at FileHandler.Api.Controllers.FilesController.<>c__DisplayClass7_0.<<Export>b__1>d.MoveNext() in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Controllers\FilesController.cs:line 131
+      --- End of stack trace from previous location ---
+         at FileHandler.Api.Controllers.FilesController.<>c__DisplayClass7_0.<<Export>b__1>d.MoveNext() in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Controllers\FilesController.cs:line 132
+      --- End of stack trace from previous location ---
+         at FileHandler.Api.Diagnostics.DebugTrace.TraceAsync[T](String owner, String method, Func`1 input, Func`2 action) in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Diagnostics\DebugTrace.cs:line 92
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.TaskOfIActionResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.InvokeInnerFilterAsync()
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeNextResourceFilter>g__Awaited|25_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.Rethrow(ResourceExecutedContextSealed context)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.InvokeFilterPipelineAsync()
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+         at Swashbuckle.AspNetCore.SwaggerUI.SwaggerUIMiddleware.Invoke(HttpContext httpContext)
+         at Swashbuckle.AspNetCore.Swagger.SwaggerMiddleware.Invoke(HttpContext httpContext, ISwaggerProvider swaggerProvider)
+         at Program.<>c.<<<Main>$>b__0_11>d.MoveNext() in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Program.cs:line 135
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddlewareImpl.<Invoke>g__Awaited|10_0(ExceptionHandlerMiddlewareImpl middleware, HttpContext context, Task task)
+fail: GlobalExceptionHandler[0]
+      Unhandled file handling failure (request content omitted).
+      System.InvalidOperationException: Duplicate relationship Id 'SENSITIVE_SENTINEL' in owner ''.
+         at FileHandler.Api.Modules.Office.OfficePackageInspector.Inspect(OfficeSource source, CancellationToken cancellationToken) in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Modules\Office\OfficePackageInspector.cs:line 115
+         at FileHandler.Api.Modules.Word.WordService.ExportAsync(Stream stream, IReadOnlyList`1 translations, CancellationToken cancellationToken) in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Modules\Word\WordService.cs:line 214
+         at FileHandler.Api.Controllers.FilesController.<>c__DisplayClass7_0.<<Export>b__1>d.MoveNext() in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Controllers\FilesController.cs:line 131
+      --- End of stack trace from previous location ---
+         at FileHandler.Api.Controllers.FilesController.<>c__DisplayClass7_0.<<Export>b__1>d.MoveNext() in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Controllers\FilesController.cs:line 132
+      --- End of stack trace from previous location ---
+         at FileHandler.Api.Diagnostics.DebugTrace.TraceAsync[T](String owner, String method, Func`1 input, Func`2 action) in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Diagnostics\DebugTrace.cs:line 92
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ActionMethodExecutor.TaskOfIActionResultExecutor.Execute(ActionContext actionContext, IActionResultTypeMapper mapper, ObjectMethodExecutor executor, Object controller, Object[] arguments)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeActionMethodAsync>g__Awaited|12_0(ControllerActionInvoker invoker, ValueTask`1 actionResultValueTask)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.<InvokeNextActionFilterAsync>g__Awaited|10_0(ControllerActionInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Rethrow(ActionExecutedContextSealed context)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ControllerActionInvoker.InvokeInnerFilterAsync()
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeNextResourceFilter>g__Awaited|25_0(ResourceInvoker invoker, Task lastTask, State next, Scope scope, Object state, Boolean isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.Rethrow(ResourceExecutedContextSealed context)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.Next(State& next, Scope& scope, Object& state, Boolean& isCompleted)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.InvokeFilterPipelineAsync()
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+         at Microsoft.AspNetCore.Mvc.Infrastructure.ResourceInvoker.<InvokeAsync>g__Awaited|17_0(ResourceInvoker invoker, Task task, IDisposable scope)
+         at Swashbuckle.AspNetCore.SwaggerUI.SwaggerUIMiddleware.Invoke(HttpContext httpContext)
+         at Swashbuckle.AspNetCore.Swagger.SwaggerMiddleware.Invoke(HttpContext httpContext, ISwaggerProvider swaggerProvider)
+         at Program.<>c.<<<Main>$>b__0_11>d.MoveNext() in D:\Projects\trans_sys\filehandler\src\FileHandler.Api\Program.cs:line 135
+      --- End of stack trace from previous location ---
+         at Microsoft.AspNetCore.Diagnostics.ExceptionHandlerMiddlewareImpl.<Invoke>g__Awaited|10_0(ExceptionHandlerMiddlewareImpl middleware, HttpContext context, Task task)

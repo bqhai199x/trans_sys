@@ -1,0 +1,330 @@
+{
+  "files": 99,
+  "declarations": 816,
+  "inheritedOnlyOrMixed": 27,
+  "affectedDeclarations": 35,
+  "findings": [
+    {
+      "file": "src/FileHandler.Api/Diagnostics/DebugTrace.cs",
+      "line": 63,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "boilerplate/article review required"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Diagnostics/DebugTrace.cs",
+      "line": 87,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "boilerplate/article review required"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Diagnostics/DebugTrace.cs",
+      "line": 136,
+      "kind": "PropertyDeclaration",
+      "issues": [
+        "boilerplate/article review required"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Excel/ExcelExtractor.cs",
+      "line": 50,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Excel/ExcelService.cs",
+      "line": 100,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Excel/ExcelService.cs",
+      "line": 182,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 51,
+      "kind": "PropertyDeclaration",
+      "issues": [
+        "missing explicit summary"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 54,
+      "kind": "PropertyDeclaration",
+      "issues": [
+        "missing explicit summary"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 57,
+      "kind": "PropertyDeclaration",
+      "issues": [
+        "missing explicit summary"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 60,
+      "kind": "PropertyDeclaration",
+      "issues": [
+        "missing explicit summary"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 63,
+      "kind": "PropertyDeclaration",
+      "issues": [
+        "missing explicit summary"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 77,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 80,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 83,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 86,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 90,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 94,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 112,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 122,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 133,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 144,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 155,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 166,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Office/OfficeBoundedStream.cs",
+      "line": 174,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/PowerPoint/PowerPointExtractor.cs",
+      "line": 49,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/PowerPoint/PowerPointService.cs",
+      "line": 100,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/PowerPoint/PowerPointService.cs",
+      "line": 182,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Word/WordExtractor.cs",
+      "line": 49,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Word/WordService.cs",
+      "line": 100,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "src/FileHandler.Api/Modules/Word/WordService.cs",
+      "line": 182,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "missing explicit summary",
+        "parameter tags missing or out of order",
+        "missing explicit returns"
+      ]
+    },
+    {
+      "file": "tests/FileHandler.Tests/Api/DebugControllerTests.cs",
+      "line": 51,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "boilerplate/article review required"
+      ]
+    },
+    {
+      "file": "tests/FileHandler.Tests/Api/FilesApiTests.cs",
+      "line": 186,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "boilerplate/article review required"
+      ]
+    },
+    {
+      "file": "tests/FileHandler.Tests/Api/FilesApiTests.cs",
+      "line": 258,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "boilerplate/article review required"
+      ]
+    },
+    {
+      "file": "tests/FileHandler.Tests/Modules/Office/OfficeFixtureFactory.cs",
+      "line": 25,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "boilerplate/article review required"
+      ]
+    },
+    {
+      "file": "tests/FileHandler.Tests/Modules/Office/OfficeFixtureFactory.cs",
+      "line": 410,
+      "kind": "MethodDeclaration",
+      "issues": [
+        "boilerplate/article review required"
+      ]
+    }
+  ]
+}
