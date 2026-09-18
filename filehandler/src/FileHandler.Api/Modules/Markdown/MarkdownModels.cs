@@ -97,7 +97,8 @@ internal sealed record MarkerDefinition(int Id, MarkerKind Kind, string OpenSour
 /// <param name="IsHeading">Whether unit belongs to heading.</param>
 /// <param name="NewlineReplacement">Source newline sequence and any required prefix.</param>
 /// <param name="HasSoftBreak">Whether unit contains soft line break.</param>
-internal sealed record MarkdownUnit(int Start, int End, string Text, IReadOnlyDictionary<int, MarkerDefinition> Markers, SourceLineRange Line, bool IsHeading, string NewlineReplacement, bool HasSoftBreak);
+/// <param name="TokenTemplate">Public run and anchor mapping, when extracted from Markdown.</param>
+internal sealed record MarkdownUnit(int Start, int End, string Text, IReadOnlyDictionary<int, MarkerDefinition> Markers, SourceLineRange Line, bool IsHeading, string NewlineReplacement, bool HasSoftBreak, MarkdownTokenTemplate? TokenTemplate = null);
 
 /// <summary>
 /// Extracted units and document validation metadata.

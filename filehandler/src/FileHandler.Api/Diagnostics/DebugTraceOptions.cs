@@ -37,6 +37,11 @@ public sealed class DebugTraceOptions
     public int MaxEvents { get; set; } = 10000;
 
     /// <summary>
+    /// Maximum serialized trace bytes; overflow produces a summary-only trace.
+    /// </summary>
+    public long MaxTraceBytes { get; set; } = 4194304;
+
+    /// <summary>
     /// Explicit request paths eligible for tracing.
     /// </summary>
     public string[]? TraceablePaths { get; set; }

@@ -45,7 +45,7 @@ public sealed class DebugControllerTests : IDisposable
             })));
 
     /// <summary>
-    /// Verifies that the HTML viewer page is served at root debug endpoint.
+    /// Verifies that HTML viewer page is served at root debug endpoint.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]

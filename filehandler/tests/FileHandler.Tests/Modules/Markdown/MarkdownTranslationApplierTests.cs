@@ -98,15 +98,15 @@ public sealed class MarkdownTranslationApplierTests
     /// <param name="code">Machine-readable error code.</param>
     /// <returns>No return value.</returns>
     [Theory]
-    [InlineData("<keepme1>x", "missing_marker")]
-    [InlineData("<keepme99>x<keepme99/>", "unexpected_marker")]
-    [InlineData("<keepme1>x<keepme1/><keepme1>y<keepme1/>", "duplicate_marker")]
-    [InlineData("<keepme1/>x<keepme1>", "invalid_marker_nesting")]
-    [InlineData("<keepme01>x<keepme01/>", "invalid_marker_syntax")]
-    [InlineData("<keepme2147483648>", "invalid_marker_syntax")]
+    [InlineData("<ox:r0>x", "invalid_marker_syntax")]
+    [InlineData("<ox:r99>x</ox:r99><ox:r1>!</ox:r1>", "invalid_marker_syntax")]
+    [InlineData("<ox:r0>x</ox:r0><ox:r0>y</ox:r0>", "invalid_marker_syntax")]
+    [InlineData("</ox:r0>x<ox:r0>", "invalid_marker_syntax")]
+    [InlineData("<ox:r00>x</ox:r00>", "invalid_marker_syntax")]
+    [InlineData("<ox:r2147483648>x</ox:r2147483648>", "invalid_marker_syntax")]
     public void Apply_RejectsInvalidMarkersAtomically(string translation, string code)
     {
-        var result = MarkdownTranslationApplier.Apply(Extraction("**Hello**"), [translation], new(), default);
+        var result = MarkdownTranslationApplier.Apply(Extraction("**Hello**!"), [translation], new(), default);
         Assert.Null(result.Text);
         Assert.Contains(result.Errors, x => x.Code == code);
     }
@@ -119,17 +119,17 @@ public sealed class MarkdownTranslationApplierTests
     public void Apply_RestoresFormattingAndProtectedContent()
     {
         var result = MarkdownTranslationApplier.Apply(Extraction("**Hello** `code`"),
-            ["<keepme1>Bonjour<keepme1/> <keepme2><keepme2/>"], new(), default);
+            ["<ox:r0>Bonjour</ox:r0><ox:k0/><ox:k1/>"], new(), default);
         Assert.Empty(result.Errors);
         Assert.Equal("**Bonjour** `code`", result.Text);
         var invalid = MarkdownTranslationApplier.Apply(Extraction("Read `code`"),
-            ["Lire <keepme1>changed<keepme1/>"], new(), default);
+            ["<ox:r0>Lire </ox:r0><ox:k0>changed</ox:k0>"], new(), default);
         Assert.Null(invalid.Text);
-        Assert.Contains(invalid.Errors, x => x.Code == "protected_marker_not_empty");
+        Assert.Contains(invalid.Errors, x => x.Code == "invalid_marker_syntax");
     }
 
     /// <summary>
-    /// Verifies translated newlines follow source policy.
+    /// Verifies raw newlines cannot replace protected soft-break tokens.
     /// </summary>
     /// <param name="translation">Translated unit text.</param>
     /// <returns>No return value.</returns>
@@ -137,11 +137,11 @@ public sealed class MarkdownTranslationApplierTests
     [InlineData("a\nb")]
     [InlineData("a\rb")]
     [InlineData("a\r\nb")]
-    public void Apply_NormalizesNewlinesUsingSourcePolicy(string translation)
+    public void Apply_RejectsMissingSoftBreakTokens(string translation)
     {
         var result = MarkdownTranslationApplier.Apply(Extraction("> One\r\n> Two"), [translation], new(), default);
-        Assert.Empty(result.Errors);
-        Assert.Equal("> a\r\n> b", result.Text);
+        Assert.Contains(result.Errors, e => e.Code == "invalid_marker_syntax");
+        Assert.Null(result.Text);
     }
 
     /// <summary>

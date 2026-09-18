@@ -9,6 +9,11 @@ public sealed class TraceDocument
 {
 
     /// <summary>
+    /// Metadata layout version enabling streaming summary reads.
+    /// </summary>
+    public int Version { get; set; } = 1;
+
+    /// <summary>
     /// Unique identifier for this trace session.
     /// </summary>
     public string Id { get; set; } = string.Empty;

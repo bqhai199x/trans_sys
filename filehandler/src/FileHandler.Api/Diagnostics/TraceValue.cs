@@ -19,6 +19,30 @@ internal static class TraceValue
 {
 
     /// <summary>
+    /// Estimates bounded snapshot storage using worst-case JSON string escaping.
+    /// </summary>
+    /// <param name="value">Already captured snapshot.</param>
+    /// <returns>Conservative byte estimate.</returns>
+    internal static long EstimateBytes(object? value)
+    {
+        if (value is null) return 4;
+        if (value is string text) return 2L + text.Length * 6L;
+        if (value is IDictionary dictionary)
+        {
+            long bytes = 32;
+            foreach (DictionaryEntry entry in dictionary) bytes += EstimateBytes(entry.Key) + EstimateBytes(entry.Value) + 2;
+            return bytes;
+        }
+        if (value is IEnumerable collection)
+        {
+            long bytes = 32;
+            foreach (var item in collection) bytes += EstimateBytes(item) + 1;
+            return bytes;
+        }
+        return 128;
+    }
+
+    /// <summary>
     /// JSON serializer settings for string and value escaping.
     /// </summary>
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -177,7 +201,14 @@ internal static class TraceValue
         return actionResult switch
         {
             ObjectResult obj => new Dictionary<string, object?> { ["status"] = obj.StatusCode, ["body"] = Snapshot(obj.Value, depth + 1, limit, ref budget) },
-            FileContentResult file => new Dictionary<string, object?> { ["contentType"] = file.ContentType, ["fileDownloadName"] = file.FileDownloadName, ["content"] = Snapshot(file.FileContents, depth + 1, limit, ref budget) },
+            FileContentResult file => new Dictionary<string, object?>
+            {
+                ["contentType"] = file.ContentType,
+                ["fileDownloadName"] = file.FileDownloadName,
+                ["content"] = file.ContentType?.StartsWith("text/", StringComparison.OrdinalIgnoreCase) == true
+                    ? Snapshot(file.FileContents, depth + 1, limit, ref budget)
+                    : new Dictionary<string, object?> { ["bytes"] = file.FileContents.Length, ["kind"] = "binary" }
+            },
             StatusCodeResult status => new Dictionary<string, object?> { ["status"] = status.StatusCode },
             _ => actionResult.GetType().Name
         };
@@ -195,8 +226,8 @@ internal static class TraceValue
     {
         var info = new Dictionary<string, object?> { ["type"] = node.GetType().Name, ["span"] = $"{node.Span.Start}..{node.Span.End}" };
         if (node is LiteralInline literal) info["text"] = Snapshot(literal.Content.ToString(), depth + 1, limit, ref budget);
-        if (node is ContainerInline container) info["children"] = Snapshot(container.ToList(), depth + 1, limit, ref budget);
-        if (node is ContainerBlock blocks) info["blocks"] = Snapshot(blocks.ToArray(), depth + 1, limit, ref budget);
+        if (node is ContainerInline container) info["children"] = Snapshot(container.Take(Math.Max(0, budget)).ToArray(), depth + 1, limit, ref budget);
+        if (node is ContainerBlock blocks) info["blocks"] = Snapshot(blocks.Take(Math.Max(0, budget)).ToArray(), depth + 1, limit, ref budget);
         if (node is LeafBlock leaf) info["inline"] = Snapshot(leaf.Inline, depth + 1, limit, ref budget);
         return info;
     }

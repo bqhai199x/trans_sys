@@ -15,6 +15,27 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
 {
 
     /// <summary>
+    /// Verifies actual multipart bytes are bounded without a Content-Length header.
+    /// </summary>
+    /// <returns>Task completing after response assertions.</returns>
+    [Fact]
+    public async Task ChunkedMultipart_EnforcesAggregateByteLimit()
+    {
+        using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+            services.PostConfigure<FileHandlingOptions>(options => options.MaxMultipartBytes = 4096)));
+        using var client = factory.CreateClient();
+        using var form = Form("source.txt", "Hello");
+        form.Add(new StringContent(new string('x', 2600)), "extra1");
+        form.Add(new StringContent(new string('x', 2600)), "extra2");
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/import") { Content = form };
+        request.Headers.TransferEncodingChunked = true;
+        using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal(JsonValueKind.Array, json.RootElement.ValueKind);
+    }
+
+    /// <summary>
     /// HTTP client for API tests.
     /// </summary>
     private readonly HttpClient _client;
@@ -48,7 +69,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         using var form = Form("guide.md", "# Hello", "[\"Xin chào\"]");
         var response = await _client.PostAsync("/export", form);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("guide.translated.md", response.Content.Headers.ContentDisposition?.FileNameStar);
+        Assert.Equal("guide.md", response.Content.Headers.ContentDisposition?.FileNameStar);
         Assert.Equal("# Xin chào", await response.Content.ReadAsStringAsync());
     }
 
@@ -178,7 +199,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     /// <summary>
-    /// Verifies the same syntax-like text selects different handlers by extension.
+    /// Verifies same syntax-like text selects different handlers by extension.
     /// </summary>
     /// <param name="name">Source file name.</param>
     /// <param name="expected">Expected imported unit.</param>
@@ -216,7 +237,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal("utf-8", response.Content.Headers.ContentType?.CharSet);
-        Assert.Equal("guide.translated.txt", response.Content.Headers.ContentDisposition?.FileNameStar);
+        Assert.Equal("guide.TXT", response.Content.Headers.ContentDisposition?.FileNameStar);
         Assert.Equal(Utf8TextReader.Encode("# Xin chào\nDòng mới\r\n\r\n<keepme01> **Thế giới**\r\n", true), await response.Content.ReadAsByteArrayAsync());
     }
 
@@ -251,7 +272,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
     }
 
     /// <summary>
-    /// Verifies invalid TXT source encoding returns the shared error array contract.
+    /// Verifies invalid TXT source encoding returns shared error array contract.
     /// </summary>
     /// <param name="path">Import or export route.</param>
     /// <returns>Task representing test completion.</returns>
@@ -351,5 +372,25 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         form.Add(file, "file", fileName);
         if (translations is not null) form.Add(new StringContent(translations), "translatedTexts");
         return form;
+    }
+
+    /// <summary>
+    /// Verifies shared Markdown wire tokens survive HTTP JSON and preserve download name.
+    /// </summary>
+    /// <returns>Task representing completed HTTP assertions.</returns>
+    [Fact]
+    public async Task MarkdownWireTokensRoundTripThroughHttp()
+    {
+        const string source = "Before **red** after `code`";
+        using var importForm = Form("Guide.MD", source);
+        using var importedResponse = await _client.PostAsync("/import", importForm);
+        Assert.Equal(HttpStatusCode.OK, importedResponse.StatusCode);
+        var texts = JsonSerializer.Deserialize<string[]>(await importedResponse.Content.ReadAsStringAsync())!;
+        Assert.Equal("<ox:r0>Before </ox:r0><ox:r1>red</ox:r1><ox:r2> after </ox:r2><ox:k0/>", Assert.Single(texts));
+        using var exportForm = Form("Guide.MD", source, JsonSerializer.Serialize(new[] { texts[0].Replace(">red<", ">đỏ<") }));
+        using var exported = await _client.PostAsync("/export", exportForm);
+        Assert.Equal(HttpStatusCode.OK, exported.StatusCode);
+        Assert.Equal("Guide.MD", exported.Content.Headers.ContentDisposition?.FileNameStar);
+        Assert.Equal("Before **đỏ** after `code`", await exported.Content.ReadAsStringAsync());
     }
 }

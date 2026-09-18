@@ -14,5 +14,20 @@ public enum FileType
     /// <summary>
     /// UTF-8 plain text document.
     /// </summary>
-    PlainText
+    PlainText,
+
+    /// <summary>
+    /// Microsoft Word document (.docx).
+    /// </summary>
+    Word,
+
+    /// <summary>
+    /// Microsoft Excel spreadsheet (.xlsx).
+    /// </summary>
+    Excel,
+
+    /// <summary>
+    /// Microsoft PowerPoint presentation (.pptx).
+    /// </summary>
+    PowerPoint
 }

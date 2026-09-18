@@ -128,6 +128,27 @@ public sealed class DebugController : ControllerBase
                 else
                 {
                     using var stream = System.IO.File.OpenRead(file);
+                    var header = JsonSerializer.Deserialize<TraceHeader>(stream, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    if (header is { Version: >= 1 })
+                    {
+                        if (!status.HasValue || header.Status == status.Value)
+                            list.Add(new DebugLogSummary
+                            {
+                                Id = header.Id ?? Path.GetFileNameWithoutExtension(file),
+                                FileName = Path.GetFileName(file),
+                                RequestFileName = header.FileName,
+                                Timestamp = header.Timestamp,
+                                Method = header.Method ?? "",
+                                Path = header.Path ?? "",
+                                Status = header.Status,
+                                DurationMs = header.DurationMs,
+                                FileSizeBytes = stream.Length,
+                                Error = header.Error.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null ? null :
+                                    header.Error.ValueKind == JsonValueKind.String ? header.Error.GetString() : header.Error.GetRawText()
+                            });
+                        continue;
+                    }
+                    stream.Position = 0;
                     using var doc = JsonDocument.Parse(stream);
                     var summary = ParseLogSummary(doc.RootElement, file, status);
                     if (summary is not null)
@@ -142,6 +163,58 @@ public sealed class DebugController : ControllerBase
 
         list.Sort((a, b) => b.Timestamp.CompareTo(a.Timestamp));
         return Ok(list);
+    }
+
+    /// <summary>
+    /// Root metadata projection; serializer skips call trees without retaining them.
+    /// </summary>
+    private sealed class TraceHeader
+    {
+
+        /// <summary>
+        /// Serialized metadata version.
+        /// </summary>
+        public int Version { get; set; }
+
+        /// <summary>
+        /// Request trace identifier.
+        /// </summary>
+        public string? Id { get; set; }
+
+        /// <summary>
+        /// Original client filename, or null.
+        /// </summary>
+        public string? FileName { get; set; }
+
+        /// <summary>
+        /// Trace start time in UTC.
+        /// </summary>
+        public DateTime Timestamp { get; set; }
+
+        /// <summary>
+        /// HTTP method.
+        /// </summary>
+        public string? Method { get; set; }
+
+        /// <summary>
+        /// Request path.
+        /// </summary>
+        public string? Path { get; set; }
+
+        /// <summary>
+        /// HTTP status code.
+        /// </summary>
+        public int Status { get; set; }
+
+        /// <summary>
+        /// Request duration in milliseconds.
+        /// </summary>
+        public double DurationMs { get; set; }
+
+        /// <summary>
+        /// Bounded error summary, if present.
+        /// </summary>
+        public JsonElement Error { get; set; }
     }
 
     /// <summary>

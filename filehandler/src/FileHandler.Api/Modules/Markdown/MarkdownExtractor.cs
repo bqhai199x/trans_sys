@@ -57,7 +57,8 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
                     continue;
                 }
                 var (newlineReplacement, hasSoftBreak) = FindNewlinePolicy(leaf.Inline, source.Text);
-                units.Add(new(encoded.Start, encoded.End, encoded.Text, encoded.Markers, source.Lines.GetRange(encoded.Start, encoded.End), leaf is HeadingBlock, newlineReplacement, hasSoftBreak));
+                var wire = MarkdownTokenCodec.Encode(encoded);
+                units.Add(new(encoded.Start, encoded.End, wire.Text, encoded.Markers, source.Lines.GetRange(encoded.Start, encoded.End), leaf is HeadingBlock, newlineReplacement, hasSoftBreak, wire.Template));
                 item.State("unitIndex", () => units.Count - 1);
                 item.State("unit", () => units[^1]);
                 if (units.Count > maxUnits)
@@ -275,8 +276,8 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
                 case LineBreakInline { IsHard: true } lineBreak:
                     AddHardBreak(lineBreak, source, allocator, markers, sb);
                     break;
-                case LineBreakInline:
-                    sb.Append('\n');
+                case LineBreakInline softBreak:
+                    AddSoftBreak(softBreak, source, allocator, markers, sb);
                     break;
                 case CodeInline:
                 case AutolinkInline:
@@ -300,6 +301,24 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
         {
             trace.State("buffer", () => new { text = sb, markerCount = markers.Count });
         }
+    }
+
+    /// <summary>
+    /// Protects soft line breaks together with container continuation prefixes.
+    /// </summary>
+    /// <param name="lineBreak">Soft line break node.</param>
+    /// <param name="source">Original Markdown source.</param>
+    /// <param name="allocator">Unit marker allocator.</param>
+    /// <param name="markers">Marker definitions.</param>
+    /// <param name="sb">Encoded output buffer.</param>
+    /// <returns>No return value.</returns>
+    private static void AddSoftBreak(LineBreakInline lineBreak, string source, MarkerAllocationContext allocator, Dictionary<int, MarkerDefinition> markers, StringBuilder sb)
+    {
+        var id = allocator.AllocateId();
+        var end = lineBreak.NextSibling?.Span.Start ?? lineBreak.Span.End + 1;
+        if (end < source.Length && end > 0 && source[end - 1] == '\r' && source[end] == '\n') end++;
+        markers[id] = new(id, MarkerKind.Protected, SafeSlice(source, lineBreak.Span.Start, end), string.Empty);
+        sb.Append(MarkdownMarkerCodec.Open(id)).Append(MarkdownMarkerCodec.Close(id));
     }
 
     /// <summary>

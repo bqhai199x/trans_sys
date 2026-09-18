@@ -58,8 +58,8 @@ internal static class DebugTrace
     /// <param name="owner">Component name shown in trace list.</param>
     /// <param name="method">Traced method name.</param>
     /// <param name="input">Factory for captured input values.</param>
-    /// <param name="action">Action receiving the active trace call.</param>
-    /// <returns>Result of the traced operation.</returns>
+    /// <param name="action">Action receiving active trace call.</param>
+    /// <returns>Result of traced operation.</returns>
     public static T Trace<T>(string owner, string method, Func<object?> input, Func<TraceCall, T> action)
     {
         using var trace = Enter(owner, method, input);
@@ -82,8 +82,8 @@ internal static class DebugTrace
     /// <param name="owner">Component name shown in trace list.</param>
     /// <param name="method">Traced method name.</param>
     /// <param name="input">Factory for captured input values.</param>
-    /// <param name="action">Asynchronous action receiving the active trace call.</param>
-    /// <returns>Task containing the result of the traced operation.</returns>
+    /// <param name="action">Asynchronous action receiving active trace call.</param>
+    /// <returns>Task containing result of traced operation.</returns>
     public static async Task<T> TraceAsync<T>(string owner, string method, Func<object?> input, Func<TraceCall, Task<T>> action)
     {
         using var trace = Enter(owner, method, input);
@@ -131,7 +131,7 @@ internal abstract class TraceScope : IDisposable
     internal TraceScope? Parent { get; }
 
     /// <summary>
-    /// Trace node associated with this scope in the document tree.
+    /// Trace node associated with this scope in document tree.
     /// </summary>
     internal TraceNode Node { get; set; }
 
@@ -359,7 +359,7 @@ internal sealed class TraceItem : TraceScope
 /// <summary>
 /// Active diagnostic trace session managing tree structure, event limits, and JSON persistence.
 /// </summary>
-internal sealed class TraceSession : IDisposable
+internal sealed class TraceSession : IDisposable, IAsyncDisposable
 {
 
     /// <summary>
@@ -410,6 +410,11 @@ internal sealed class TraceSession : IDisposable
     private int _events;
 
     /// <summary>
+    /// Conservative cumulative snapshot and event byte estimate.
+    /// </summary>
+    private long _capturedBytes;
+
+    /// <summary>
     /// Whether trace output has failed.
     /// </summary>
     private bool _failed;
@@ -433,7 +438,7 @@ internal sealed class TraceSession : IDisposable
         {
             lock (_gate)
             {
-                return !_failed && !_closed && _events < _options.MaxEvents;
+                return !_failed && !_closed && _events < _options.MaxEvents && _capturedBytes < _options.MaxTraceBytes;
             }
         }
     }
@@ -661,6 +666,8 @@ internal sealed class TraceSession : IDisposable
     private bool RecordEvent()
     {
         if (_failed || _closed) return false;
+        if (_capturedBytes >= _options.MaxTraceBytes) return false;
+        _capturedBytes += 256;
         if (_events >= _options.MaxEvents) return false;
         if (++_events >= _options.MaxEvents)
         {
@@ -704,7 +711,20 @@ internal sealed class TraceSession : IDisposable
     {
         if (!Accepting) return "[Truncated]";
         if (!_options.CaptureContent) return "[Hidden]";
-        try { return TraceValue.Capture(factory(), _options); }
+        try
+        {
+            var captured = TraceValue.Capture(factory(), _options);
+            lock (_gate)
+            {
+                _capturedBytes += TraceValue.EstimateBytes(captured);
+                if (_capturedBytes >= _options.MaxTraceBytes)
+                {
+                    _document.Error = "[Truncated - MaxTraceBytes reached]";
+                    return "[Truncated]";
+                }
+            }
+            return captured;
+        }
         catch { return "[Unavailable]"; }
     }
 
@@ -717,8 +737,25 @@ internal sealed class TraceSession : IDisposable
         if (_failed) return;
         try
         {
-            var json = JsonSerializer.Serialize(_document, JsonOptions);
-            File.WriteAllText(_path, json, new UTF8Encoding(false));
+            using var output = new BoundedTraceFile(_path, Math.Max(4096, _options.MaxTraceBytes));
+            try
+            {
+                JsonSerializer.Serialize(output, _document, JsonOptions);
+            }
+            catch (TraceSizeException)
+            {
+                output.SetLength(0);
+                output.Position = 0;
+                JsonSerializer.Serialize(output, new TraceDocument
+                {
+                    Id = _document.Id,
+                    Timestamp = _document.Timestamp,
+                    Status = _document.Status,
+                    DurationMs = _document.DurationMs,
+                    Cancelled = _document.Cancelled,
+                    Error = "[Truncated - MaxTraceBytes reached]"
+                }, JsonOptions);
+            }
         }
         catch (Exception ex)
         {
@@ -762,5 +799,42 @@ internal sealed class TraceSession : IDisposable
             _closed = true;
             Flush();
         }
+    }
+
+    /// <summary>
+    /// Completes trace serialization without blocking request threads on disk writes.
+    /// </summary>
+    /// <returns>Task completing after trace publication or contained trace failure.</returns>
+    public async ValueTask DisposeAsync()
+    {
+        lock (_gate)
+        {
+            if (_closed) return;
+            _closed = true;
+            if (_failed) return;
+        }
+        try
+        {
+            await using var output = new BoundedTraceFile(_path, Math.Max(4096, _options.MaxTraceBytes));
+            try
+            {
+                await JsonSerializer.SerializeAsync(output, _document, JsonOptions).ConfigureAwait(false);
+            }
+            catch (TraceSizeException)
+            {
+                output.SetLength(0);
+                output.Position = 0;
+                await JsonSerializer.SerializeAsync(output, new TraceDocument
+                {
+                    Id = _document.Id,
+                    Timestamp = _document.Timestamp,
+                    Status = _document.Status,
+                    DurationMs = _document.DurationMs,
+                    Cancelled = _document.Cancelled,
+                    Error = "[Truncated - MaxTraceBytes reached]"
+                }, JsonOptions).ConfigureAwait(false);
+            }
+        }
+        catch (Exception ex) { Fail(ex); }
     }
 }

@@ -11,6 +11,24 @@ public sealed class TraceSessionTests : IDisposable
 {
 
     /// <summary>
+    /// Verifies trace overflow produces valid bounded JSON with a visible truncation reason.
+    /// </summary>
+    /// <returns>No return value.</returns>
+    [Fact]
+    public void Flush_EnforcesSerializedByteLimit()
+    {
+        using (var session = new TraceSession(_path, new() { MaxTraceBytes = 4096 }, NullLogger.Instance))
+        {
+            session.Document.FileName = new string('x', 10000);
+            session.WriteResult(200, 1);
+        }
+        Assert.True(new FileInfo(_path).Length <= 4096);
+        using var json = JsonDocument.Parse(File.ReadAllText(_path));
+        Assert.Equal(200, json.RootElement.GetProperty("status").GetInt32());
+        Assert.Contains("MaxTraceBytes", json.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Temporary trace file path for this test fixture.
     /// </summary>
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"trace-unit-{Guid.NewGuid():N}.json");

@@ -49,7 +49,7 @@ public sealed class MarkdownProfileTests
         var service = Create();
         var bytes = Encoding.UTF8.GetBytes("Read <keepme1> literally and **translate me**.");
         var imported = await service.ImportAsync(new MemoryStream(bytes), TestContext.Current.CancellationToken);
-        Assert.Contains("<keepme2>", imported.Texts.Single(), StringComparison.Ordinal);
+        Assert.Contains("<ox:k0/>", imported.Texts.Single(), StringComparison.Ordinal);
         var changed = imported.Texts.Single().Replace("translate me", "dịch tôi", StringComparison.Ordinal);
         var exported = await service.ExportAsync(new MemoryStream(bytes), [changed], TestContext.Current.CancellationToken);
         Assert.Empty(exported.Errors);
@@ -71,20 +71,20 @@ public sealed class MarkdownProfileTests
         var empty = await service.ExportAsync(new MemoryStream(source), [" "], TestContext.Current.CancellationToken);
         Assert.Contains(empty.Errors, x => x.Code == "empty_translation");
 
-        var duplicate = await service.ExportAsync(new MemoryStream(source), ["<keepme1>x<keepme1/><keepme1>x<keepme1/> <keepme2><keepme2/>"], TestContext.Current.CancellationToken);
-        Assert.Contains(duplicate.Errors, x => x.Code == "duplicate_marker");
+        var duplicate = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>x</ox:r0><ox:r0>x</ox:r0>"], TestContext.Current.CancellationToken);
+        Assert.Contains(duplicate.Errors, x => x.Code == "invalid_marker_syntax");
 
-        var unexpected = await service.ExportAsync(new MemoryStream(source), ["x <keepme99><keepme99/>"], TestContext.Current.CancellationToken);
-        Assert.Contains(unexpected.Errors, x => x.Code == "unexpected_marker");
+        var unexpected = await service.ExportAsync(new MemoryStream(source), ["<ox:r99>x</ox:r99>"], TestContext.Current.CancellationToken);
+        Assert.Contains(unexpected.Errors, x => x.Code == "invalid_marker_syntax");
 
-        var protectedContent = await service.ExportAsync(new MemoryStream(source), ["x <keepme1>y<keepme1/> <keepme2>bad<keepme2/>"], TestContext.Current.CancellationToken);
-        Assert.Contains(protectedContent.Errors, x => x.Code == "protected_marker_not_empty");
+        var protectedContent = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>x</ox:r0><ox:r1>y</ox:r1><ox:r2> and </ox:r2><ox:k0>bad</ox:k0><ox:r3>.</ox:r3>"], TestContext.Current.CancellationToken);
+        Assert.Contains(protectedContent.Errors, x => x.Code == "invalid_marker_syntax");
         Assert.Null(protectedContent.Content);
 
-        var nonCanonical = await service.ExportAsync(new MemoryStream(source), ["x <keepme01>y<keepme01/> <keepme2><keepme2/>"], TestContext.Current.CancellationToken);
+        var nonCanonical = await service.ExportAsync(new MemoryStream(source), ["<ox:r00>y</ox:r00>"], TestContext.Current.CancellationToken);
         Assert.Contains(nonCanonical.Errors, x => x.Code == "invalid_marker_syntax");
 
-        var overflow = await service.ExportAsync(new MemoryStream(source), ["x <keepme999999999999999999><keepme999999999999999999/>"], TestContext.Current.CancellationToken);
+        var overflow = await service.ExportAsync(new MemoryStream(source), ["<ox:r999999999999999999>x</ox:r999999999999999999>"], TestContext.Current.CancellationToken);
         Assert.Contains(overflow.Errors, x => x.Code == "invalid_marker_syntax");
     }
 
@@ -135,8 +135,8 @@ public sealed class MarkdownProfileTests
         var service = Create();
         var source = Encoding.UTF8.GetBytes("> First line\r\n> second line\r\n");
         var imported = await service.ImportAsync(new MemoryStream(source), TestContext.Current.CancellationToken);
-        Assert.Equal(["First line\nsecond line"], imported.Texts);
-        var exported = await service.ExportAsync(new MemoryStream(source), ["Dòng một\nDòng hai"], TestContext.Current.CancellationToken);
+        Assert.Equal(["<ox:r0>First line</ox:r0><ox:k0/><ox:r1>second line</ox:r1>"], imported.Texts);
+        var exported = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>Dòng một</ox:r0><ox:k0/><ox:r1>Dòng hai</ox:r1>"], TestContext.Current.CancellationToken);
         Assert.Empty(exported.Errors);
         Assert.Equal("> Dòng một\r\n> Dòng hai\r\n", Encoding.UTF8.GetString(exported.Content!));
     }

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Logging;
 
 namespace FileHandler.Tests.Api;
 
@@ -36,7 +37,8 @@ public sealed class GlobalExceptionHandlerTests
             "invalid-data" => new InvalidDataException("secret"),
             _ => new InvalidOperationException("secret")
         };
-        var handler = new GlobalExceptionHandler(NullLogger<GlobalExceptionHandler>.Instance);
+        var logger = new CapturingLogger();
+        var handler = new GlobalExceptionHandler(logger);
         Assert.True(await handler.TryHandleAsync(context, exception, default));
         Assert.Equal(status, context.Response.StatusCode);
         Assert.StartsWith("application/json", context.Response.ContentType);
@@ -44,5 +46,55 @@ public sealed class GlobalExceptionHandlerTests
         using var json = await JsonDocument.ParseAsync(body);
         Assert.Equal(code, json.RootElement[0].GetProperty("code").GetString());
         Assert.DoesNotContain("secret", json.RootElement.GetRawText());
+        Assert.DoesNotContain("secret", string.Join("\n", logger.Messages));
+        Assert.Null(logger.Exception);
+    }
+
+    /// <summary>
+    /// Captures ordinary logger output separately from diagnostic trace JSON.
+    /// </summary>
+    private sealed class CapturingLogger : ILogger<GlobalExceptionHandler>
+    {
+
+        /// <summary>
+        /// Rendered log messages.
+        /// </summary>
+        internal List<string> Messages { get; } = [];
+
+        /// <summary>
+        /// Exception supplied to logging sink, if any.
+        /// </summary>
+        internal Exception? Exception { get; private set; }
+
+        /// <summary>
+        /// Accepts an unused scope.
+        /// </summary>
+        /// <typeparam name="TState">Scope state type.</typeparam>
+        /// <param name="state">Scope state.</param>
+        /// <returns>Null because scopes are not captured.</returns>
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        /// <summary>
+        /// Enables every log level for inspection.
+        /// </summary>
+        /// <param name="logLevel">Requested level.</param>
+        /// <returns>True.</returns>
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        /// <summary>
+        /// Captures rendered state and raw exception separately.
+        /// </summary>
+        /// <typeparam name="TState">Log state type.</typeparam>
+        /// <param name="logLevel">Severity.</param>
+        /// <param name="eventId">Event identifier.</param>
+        /// <param name="state">Structured state.</param>
+        /// <param name="exception">Optional raw exception.</param>
+        /// <param name="formatter">Message formatter.</param>
+        /// <returns>No return value.</returns>
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            Exception = exception;
+            Messages.Add(formatter(state, exception));
+        }
     }
 }

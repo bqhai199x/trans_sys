@@ -4,6 +4,9 @@ using FileHandler.Api.Contracts;
 using FileHandler.Api.Controllers;
 using FileHandler.Api.Modules.Markdown;
 using FileHandler.Api.Modules.PlainText;
+using FileHandler.Api.Modules.Word;
+using FileHandler.Api.Modules.Excel;
+using FileHandler.Api.Modules.PowerPoint;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -24,7 +27,12 @@ public sealed class FilesControllerTests
     private static FilesController Create(FileHandlingOptions? options = null)
     {
         var configured = Options.Create(options ?? new());
-        return new(MarkdownService.Create(configured), new PlainTextService(configured));
+        return new(
+            MarkdownService.Create(configured),
+            new PlainTextService(configured),
+            WordService.Create(configured),
+            ExcelService.Create(configured),
+            PowerPointService.Create(configured));
     }
 
     /// <summary>
@@ -97,7 +105,7 @@ public sealed class FilesControllerTests
         }, default));
         Assert.Equal("Bonjour", Encoding.UTF8.GetString(result.FileContents));
         Assert.Equal(MarkdownService.ContentType, result.ContentType);
-        Assert.Equal("guide.translated.md", result.FileDownloadName);
+        Assert.Equal("guide.md", result.FileDownloadName);
     }
 
     /// <summary>
@@ -207,7 +215,7 @@ public sealed class FilesControllerTests
         var jsonWithComments = "[/* \"comment\" */ \"Line 1\nLine 2\"]";
         var result = Assert.IsType<FileContentResult>(await Create().Export(new()
         {
-            File = FileUpload("guide.md", Encoding.UTF8.GetBytes("Line 1\nLine 2")),
+            File = FileUpload("guide.txt", Encoding.UTF8.GetBytes("Line 1\nLine 2")),
             TranslatedTexts = jsonWithComments
         }, default));
         Assert.NotNull(result.FileContents);

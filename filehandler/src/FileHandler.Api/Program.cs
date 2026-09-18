@@ -2,6 +2,10 @@ using FileHandler.Api.Common;
 using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Markdown;
 using FileHandler.Api.Modules.PlainText;
+using FileHandler.Api.Modules.Office;
+using FileHandler.Api.Modules.Word;
+using FileHandler.Api.Modules.Excel;
+using FileHandler.Api.Modules.PowerPoint;
 using FileHandler.Api.OpenApi;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
@@ -10,10 +14,54 @@ using Microsoft.Extensions.Options;
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.Configure<DebugTraceOptions>(builder.Configuration.GetSection(DebugTraceOptions.SectionName));
 builder.Services.Configure<FileHandlingOptions>(builder.Configuration.GetSection(FileHandlingOptions.SectionName));
+builder.Services.Configure<OfficeProcessingOptions>(builder.Configuration.GetSection(OfficeProcessingOptions.SectionName));
+
+// Startup validation of options
+var officeOpts = builder.Configuration.GetSection(OfficeProcessingOptions.SectionName).Get<OfficeProcessingOptions>() ?? new OfficeProcessingOptions();
+officeOpts.Validate();
+
 builder.Services.AddSingleton(MarkdownProfile.CreatePipeline());
 builder.Services.AddSingleton<IMarkdownExtractor, MarkdownExtractor>();
 builder.Services.AddSingleton<PlainTextService>();
 builder.Services.AddSingleton(sp => new MarkdownService(sp.GetRequiredService<IOptions<FileHandlingOptions>>(), sp.GetRequiredService<IMarkdownExtractor>()));
+
+// Office shared components
+builder.Services.AddSingleton(sp => new OfficePackageReader(sp.GetRequiredService<IOptions<OfficeProcessingOptions>>().Value));
+builder.Services.AddSingleton(sp => new OfficePackageInspector(sp.GetRequiredService<IOptions<OfficeProcessingOptions>>().Value));
+builder.Services.AddSingleton(sp => new OfficeTextCodec(
+    sp.GetRequiredService<IOptions<OfficeProcessingOptions>>().Value,
+    sp.GetRequiredService<IOptions<FileHandlingOptions>>().Value));
+builder.Services.AddSingleton(sp => new OfficePackageValidator(sp.GetRequiredService<IOptions<OfficeProcessingOptions>>().Value));
+
+// Word components
+builder.Services.AddSingleton<WordTableReader>();
+builder.Services.AddSingleton<IWordExtractor>(sp => new WordExtractor(
+    sp.GetRequiredService<OfficeTextCodec>(),
+    sp.GetRequiredService<WordTableReader>(),
+    sp.GetRequiredService<IOptions<OfficeProcessingOptions>>().Value));
+builder.Services.AddSingleton<WordTranslationApplier>();
+builder.Services.AddSingleton<WordStructureValidator>();
+builder.Services.AddSingleton<WordService>();
+
+// Excel components
+builder.Services.AddSingleton<ExcelTableReader>();
+builder.Services.AddSingleton<IExcelExtractor>(sp => new ExcelExtractor(
+    sp.GetRequiredService<OfficeTextCodec>(),
+    sp.GetRequiredService<ExcelTableReader>(),
+    sp.GetRequiredService<IOptions<OfficeProcessingOptions>>().Value));
+builder.Services.AddSingleton<ExcelTranslationApplier>();
+builder.Services.AddSingleton<ExcelStructureValidator>();
+builder.Services.AddSingleton<ExcelService>();
+
+// PowerPoint components
+builder.Services.AddSingleton<PowerPointTableReader>();
+builder.Services.AddSingleton<IPowerPointExtractor>(sp => new PowerPointExtractor(
+    sp.GetRequiredService<OfficeTextCodec>(),
+    sp.GetRequiredService<PowerPointTableReader>(),
+    sp.GetRequiredService<IOptions<OfficeProcessingOptions>>().Value));
+builder.Services.AddSingleton<PowerPointTranslationApplier>();
+builder.Services.AddSingleton<PowerPointStructureValidator>();
+builder.Services.AddSingleton<PowerPointService>();
 builder.Services.AddControllers().ConfigureApiBehaviorOptions(options =>
 {
     options.InvalidModelStateResponseFactory = context =>
@@ -72,6 +120,10 @@ app.Use(async (context, next) =>
             return;
         }
 
+        var bodyLimit = context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+        if (bodyLimit is { IsReadOnly: false }) bodyLimit.MaxRequestBodySize = limits.MaxMultipartBytes;
+        context.Request.Body = new LimitedReadStream(context.Request.Body, limits.MaxMultipartBytes, "request_too_large");
+
         if (!context.Request.HasFormContentType)
         {
             context.Response.StatusCode = StatusCodes.Status415UnsupportedMediaType;
@@ -120,9 +172,9 @@ internal sealed class GlobalExceptionHandler(ILogger<GlobalExceptionHandler> log
     /// <returns>True after writing error response.</returns>
     public async ValueTask<bool> TryHandleAsync(HttpContext context, Exception exception, CancellationToken cancellationToken)
     {
-        var requestTooLarge = exception is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge }
+        var requestTooLarge = exception is FileLimitException || exception is BadHttpRequestException { StatusCode: StatusCodes.Status413PayloadTooLarge }
             || exception is InvalidDataException && exception.Message.Contains("length limit", StringComparison.OrdinalIgnoreCase);
-        if (!requestTooLarge) logger.LogError(exception, "Unhandled file handling failure (request content omitted).");
+        if (!requestTooLarge) logger.LogError("Unhandled file handling failure of type {ExceptionType}; request {RequestId}.", exception.GetType().Name, context.TraceIdentifier);
         context.Response.StatusCode = requestTooLarge ? StatusCodes.Status413PayloadTooLarge : StatusCodes.Status500InternalServerError;
         var error = requestTooLarge
             ? new FileError("request_too_large", "Multipart request vượt giới hạn cho phép.")

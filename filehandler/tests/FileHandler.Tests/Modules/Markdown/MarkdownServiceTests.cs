@@ -28,9 +28,9 @@ public sealed class MarkdownServiceTests
         var service = Create();
         var imported = await service.ImportAsync(new MemoryStream(Encoding.UTF8.GetBytes(markdown)));
         Assert.Empty(imported.Errors);
-        Assert.Equal(new[] { "Quick start", "Read <keepme1>the guide<keepme1/> at <keepme2>our website<keepme2/>, then run <keepme3><keepme3/>." }, imported.Texts);
+        Assert.Equal(new[] { "Quick start", "<ox:r0>Read </ox:r0><ox:r1>the guide</ox:r1><ox:r2> at </ox:r2><ox:r3>our website</ox:r3><ox:r4>, then run </ox:r4><ox:k0/><ox:r5>.</ox:r5>" }, imported.Texts);
 
-        var translated = new[] { "Bắt đầu nhanh", "Đọc <keepme1>hướng dẫn<keepme1/> tại <keepme2>trang web của chúng tôi<keepme2/>, sau đó chạy <keepme3><keepme3/>." };
+        var translated = new[] { "Bắt đầu nhanh", "<ox:r0>Đọc </ox:r0><ox:r1>hướng dẫn</ox:r1><ox:r2> tại </ox:r2><ox:r3>trang web của chúng tôi</ox:r3><ox:r4>, sau đó chạy </ox:r4><ox:k0/><ox:r5>.</ox:r5>" };
         var exported = await service.ExportAsync(new MemoryStream(Encoding.UTF8.GetBytes(markdown)), translated);
         Assert.Empty(exported.Errors);
         Assert.Equal("# Bắt đầu nhanh\n\nĐọc **hướng dẫn** tại [trang web của chúng tôi](https://example.com), sau đó chạy `npm install`.\n", Encoding.UTF8.GetString(exported.Content!));
@@ -60,9 +60,9 @@ public sealed class MarkdownServiceTests
     {
         var source = Encoding.UTF8.GetBytes("Hello **world**.");
         var service = Create();
-        var result = await service.ExportAsync(new MemoryStream(source), ["Xin chào <keepme1>thế giới."]);
+        var result = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>Xin chào </ox:r0><ox:r1>thế giới."]);
         Assert.Null(result.Content);
-        Assert.Contains(result.Errors, e => e.Code == "missing_marker");
+        Assert.Contains(result.Errors, e => e.Code == "invalid_marker_syntax");
     }
 
     /// <summary>
@@ -134,7 +134,7 @@ public sealed class MarkdownServiceTests
         const string source = "Before **hello** after";
         var service = Create();
         var imported = await service.ImportAsync(new MemoryStream(Encoding.UTF8.GetBytes(source)));
-        var translations = new[] { "Before <keepme1> bonjour <keepme1/> after" };
+        var translations = new[] { "<ox:r0>Before </ox:r0><ox:r1> bonjour </ox:r1><ox:r2> after</ox:r2>" };
         var exported = await service.ExportAsync(new MemoryStream(Encoding.UTF8.GetBytes(source)), translations);
         Assert.Empty(exported.Errors);
         var html = Markdig.Markdown.ToHtml(Encoding.UTF8.GetString(exported.Content!), MarkdownProfile.CreatePipeline());

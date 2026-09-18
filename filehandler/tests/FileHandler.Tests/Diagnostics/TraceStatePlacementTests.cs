@@ -6,6 +6,9 @@ using FileHandler.Api.Controllers;
 using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Markdown;
 using FileHandler.Api.Modules.PlainText;
+using FileHandler.Api.Modules.Word;
+using FileHandler.Api.Modules.Excel;
+using FileHandler.Api.Modules.PowerPoint;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -115,7 +118,7 @@ public sealed class TraceStatePlacementTests
         var log = await CaptureAsync(async () =>
         {
             using var source = Source("*Hello*");
-            var result = await service.ExportAsync(source, ["<keepme1> Bonjour <keepme1/>"]);
+            var result = await service.ExportAsync(source, [" Bonjour "]);
             Assert.Empty(result.Errors);
             Assert.Equal(" *Bonjour* ", Encoding.UTF8.GetString(result.Content!));
         });
@@ -131,21 +134,21 @@ public sealed class TraceStatePlacementTests
     }
 
     /// <summary>
-    /// Verifies marker failure preserves partial decoding without claiming later export stages ran.
+    /// Verifies token validation fails before restoration without claiming later stages ran.
     /// </summary>
     /// <returns>Task representing trace assertions.</returns>
     [Fact]
-    public async Task MarkdownMarkerFailure_RecordsPartialOutputAndStopsStages()
+    public async Task MarkdownMarkerFailure_RecordsValidationAndStopsStages()
     {
         var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
         var log = await CaptureAsync(async () =>
         {
-            using var source = Source("**Hello**");
+            using var source = Source("**Hello**!");
             var result = await service.ExportAsync(source, ["Goodbye"]);
-            Assert.Contains(result.Errors, x => x.Code == "missing_marker");
+            Assert.Contains(result.Errors, x => x.Code == "invalid_marker_syntax");
             Assert.Null(result.Content);
         });
-        Assert.Equal("Goodbye", Assert.Single(States(Call(log, "MarkdownTranslationApplier.DecodeTranslation"), "partialOutput")).GetString());
+        Assert.Equal("invalid_marker_syntax", Assert.Single(States(Call(log, "MarkdownTokenCodec.Decode"), "validation")).GetProperty("code").GetString());
         Assert.Equal("applyTranslations", States(Call(log, "MarkdownService.ExportAsync"), "stage")[^1].GetString());
         Assert.DoesNotContain(AllNodes(log), x => Target(x) == "MarkdownExtractor.ValidateStructure");
     }
@@ -255,7 +258,12 @@ public sealed class TraceStatePlacementTests
     public async Task ControllerNormalization_RecordsParseProgressAndHonorsRedaction(bool captureContent)
     {
         var options = Options.Create(new FileHandlingOptions());
-        var controller = new FilesController(MarkdownService.Create(options), new PlainTextService(options));
+        var controller = new FilesController(
+            MarkdownService.Create(options),
+            new PlainTextService(options),
+            WordService.Create(options),
+            ExcelService.Create(options),
+            PowerPointService.Create(options));
         var log = await CaptureAsync(async () =>
         {
             using var source = Source("SecretSource");

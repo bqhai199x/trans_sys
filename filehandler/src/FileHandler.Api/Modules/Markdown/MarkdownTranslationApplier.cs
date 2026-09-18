@@ -31,6 +31,7 @@ internal static class MarkdownTranslationApplier
             }
 
             var replacements = new List<(int Start, int End, string Value)>();
+            long outputBytes = Encoding.UTF8.GetByteCount(extraction.Source.Text) + (extraction.Source.HasBom ? 3 : 0);
             for (var i = 0; i < extraction.Units.Count; i++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -56,6 +57,7 @@ internal static class MarkdownTranslationApplier
                 errors.AddRange(markerErrors);
                 if (value is not null)
                 {
+                    outputBytes += Encoding.UTF8.GetByteCount(value) - Encoding.UTF8.GetByteCount(extraction.Source.Text.AsSpan(unit.Start, unit.End - unit.Start));
                     replacements.Add((unit.Start, unit.End, value));
                     item.State("outcome", () => "replacementQueued");
                 }
@@ -83,7 +85,9 @@ internal static class MarkdownTranslationApplier
             foreach (var patch in replacements)
                 trace.State("patch", () => new { patch.Start, patch.End, patch.Value });
 
-            var output = new StringBuilder(extraction.Source.Text.Length);
+            if (outputBytes > options.MaxOutputBytes)
+                return (null, [new FileError("output_too_large", "Kết quả vượt giới hạn đầu ra.")]);
+            var output = new StringBuilder((int)Math.Min(outputBytes, int.MaxValue));
             var offset = 0;
             for (var i = replacements.Count - 1; i >= 0; i--)
             {
@@ -132,6 +136,17 @@ internal static class MarkdownTranslationApplier
                     errors.Add(new("empty_translation", "Bản dịch không được rỗng hoặc chỉ chứa khoảng trắng.", i, extraction.Units[i].Line));
                 else if (translations[i].Length > options.MaxTranslationChars)
                     errors.Add(new("translation_too_long", $"Bản dịch vượt giới hạn {options.MaxTranslationChars} ký tự.", i, extraction.Units[i].Line));
+                else
+                {
+                    try
+                    {
+                        Utf8TextReader.GetByteCount(translations[i].AsSpan());
+                    }
+                    catch (EncoderFallbackException)
+                    {
+                        errors.Add(new("invalid_translation", "Bản dịch chứa chuỗi Unicode không hợp lệ.", i, extraction.Units[i].Line));
+                    }
+                }
             }
 
             return trace.Return<List<FileError>>(errors);
@@ -156,7 +171,16 @@ internal static class MarkdownTranslationApplier
         try
         {
             var errors = new List<FileError>();
-            var rawTokens = MarkdownMarkerCodec.Parse(translation);
+            IReadOnlyList<MarkerToken> rawTokens;
+            if (unit.TokenTemplate is { } template)
+            {
+                var decoded = MarkdownTokenCodec.Decode(template, translation, index, unit.Line);
+                if (decoded.Error is not null)
+                    return trace.Return<(string? Value, List<FileError> Errors)>((null, [decoded.Error]));
+                rawTokens = decoded.Tokens;
+            }
+            else
+                rawTokens = MarkdownMarkerCodec.Parse(translation);
             trace.State("tokens", () => rawTokens);
             var tokens = CanonicalizeFormattingTokens(rawTokens, unit.Markers);
             trace.State("tokens", () => tokens);
@@ -168,7 +192,9 @@ internal static class MarkdownTranslationApplier
             {
                 if (!token.IsMarker)
                 {
-                    if (token.Value.Contains(MarkdownMarkerCodec.MarkerPrefix, StringComparison.Ordinal))
+                    if (token.Value.Length > 0 && stack.TryPeek(out var owner) && unit.Markers[owner].Kind == MarkerKind.Protected)
+                        errors.Add(new("protected_marker_not_empty", "Marker bảo vệ phải rỗng.", index, unit.Line));
+                    if (unit.TokenTemplate is null && token.Value.Contains(MarkdownMarkerCodec.MarkerPrefix, StringComparison.Ordinal))
                         errors.Add(new("invalid_marker_syntax", "Marker keepme không đúng cú pháp hoặc vượt miền ID hỗ trợ.", index, unit.Line));
                     output.Append(EscapeText(token.Value, unit.NewlineReplacement));
                     continue;
@@ -212,14 +238,6 @@ internal static class MarkdownTranslationApplier
                     errors.Add(new("missing_marker", $"Thiếu marker đóng {MarkdownMarkerCodec.Close(marker.Id)}.", index, unit.Line, MarkdownMarkerCodec.Close(marker.Id)));
             }
 
-            foreach (var marker in unit.Markers.Values.Where(x => x.Kind == MarkerKind.Protected))
-            {
-                var openIndex = translation.IndexOf(MarkdownMarkerCodec.Open(marker.Id), StringComparison.Ordinal);
-                var closeIndex = translation.IndexOf(MarkdownMarkerCodec.Close(marker.Id), StringComparison.Ordinal);
-                if (openIndex >= 0 && closeIndex >= 0 && closeIndex != openIndex + MarkdownMarkerCodec.Open(marker.Id).Length)
-                    errors.Add(new("protected_marker_not_empty", $"Marker bảo vệ {MarkdownMarkerCodec.Open(marker.Id)} phải rỗng.", index, unit.Line, MarkdownMarkerCodec.Open(marker.Id)));
-            }
-
             trace.State("markerValidation", () => new { seenOpen, seenClose, unclosed = stack.ToArray() });
             if (errors.Count > 0)
                 trace.State("partialOutput", () => output);
@@ -240,77 +258,66 @@ internal static class MarkdownTranslationApplier
     /// <returns>Canonicalized tokens with whitespace outside formatting delimiters.</returns>
     private static List<MarkerToken> CanonicalizeFormattingTokens(IReadOnlyList<MarkerToken> tokens, IReadOnlyDictionary<int, MarkerDefinition> markers)
     {
-        var result = new List<MarkerToken>(tokens);
-        for (var i = 0; i < result.Count; i++)
+        var values = tokens.ToArray();
+        var closing = new int[tokens.Count];
+        Array.Fill(closing, -1);
+        var nextLiteral = new int[tokens.Count];
+        var previousLiteral = new int[tokens.Count];
+        var openings = new Dictionary<int, Stack<int>>();
+        var last = -1;
+        for (var i = 0; i < tokens.Count; i++)
         {
-            if (!result[i].IsMarker || result[i].IsClosing)
-                continue;
-
-            if (!markers.TryGetValue(result[i].Id, out var def) || def.Kind != MarkerKind.Formatting)
-                continue;
-
-            var depth = 1;
-            var closeIdx = -1;
-            for (var j = i + 1; j < result.Count; j++)
+            previousLiteral[i] = last;
+            var token = tokens[i];
+            if (!token.IsMarker && token.Value.Length > 0) last = i;
+            if (!token.IsMarker) continue;
+            if (!openings.TryGetValue(token.Id, out var stack)) openings[token.Id] = stack = new Stack<int>();
+            if (!token.IsClosing) stack.Push(i);
+            else if (stack.TryPop(out var open)) closing[open] = i;
+        }
+        last = -1;
+        for (var i = tokens.Count - 1; i >= 0; i--)
+        {
+            nextLiteral[i] = last;
+            if (!tokens[i].IsMarker && tokens[i].Value.Length > 0) last = i;
+        }
+        var before = new string?[tokens.Count];
+        var after = new string?[tokens.Count];
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            if (!tokens[i].IsMarker || tokens[i].IsClosing || closing[i] < 0 ||
+                !markers.TryGetValue(tokens[i].Id, out var definition) || definition.Kind != MarkerKind.Formatting) continue;
+            var close = closing[i];
+            var first = nextLiteral[i];
+            if (first >= 0 && first < close)
             {
-                if (result[j].IsMarker && result[j].Id == result[i].Id)
+                var value = values[first].Value;
+                var trimmed = value.TrimStart(' ', '\t');
+                if (trimmed.Length > 0 && trimmed.Length < value.Length)
                 {
-                    if (result[j].IsClosing)
-                    {
-                        depth--;
-                        if (depth == 0)
-                        {
-                            closeIdx = j;
-                            break;
-                        }
-                    }
-                    else
-                    {
-                        depth++;
-                    }
+                    before[i] = value[..(value.Length - trimmed.Length)];
+                    values[first] = values[first] with { Value = trimmed };
                 }
             }
-
-            if (closeIdx <= i)
-                continue;
-
-            for (var j = i + 1; j < closeIdx; j++)
+            var final = previousLiteral[close];
+            if (final > i)
             {
-                if (!result[j].IsMarker && !string.IsNullOrEmpty(result[j].Value))
+                var value = values[final].Value;
+                var trimmed = value.TrimEnd(' ', '\t');
+                if (trimmed.Length > 0 && trimmed.Length < value.Length)
                 {
-                    var val = result[j].Value;
-                    var trimmed = val.TrimStart(' ', '\t');
-                    var leadCount = val.Length - trimmed.Length;
-                    if (leadCount > 0 && trimmed.Length > 0)
-                    {
-                        var lead = val[..leadCount];
-                        result[j] = result[j] with { Value = trimmed };
-                        result.Insert(i, new(false, 0, lead, false));
-                        i++;
-                        closeIdx++;
-                    }
-                    break;
-                }
-            }
-
-            for (var j = closeIdx - 1; j > i; j--)
-            {
-                if (!result[j].IsMarker && !string.IsNullOrEmpty(result[j].Value))
-                {
-                    var val = result[j].Value;
-                    var trimmed = val.TrimEnd(' ', '\t');
-                    var trailCount = val.Length - trimmed.Length;
-                    if (trailCount > 0 && trimmed.Length > 0)
-                    {
-                        var trail = val[^trailCount..];
-                        result[j] = result[j] with { Value = trimmed };
-                        result.Insert(closeIdx + 1, new(false, 0, trail, false));
-                    }
-                    break;
+                    after[close] = value[trimmed.Length..];
+                    values[final] = values[final] with { Value = trimmed };
                 }
             }
         }
-
+        var result = new List<MarkerToken>(tokens.Count);
+        for (var i = 0; i < values.Length; i++)
+        {
+            if (before[i] is { } leading) result.Add(new(false, 0, leading, false));
+            result.Add(values[i]);
+            if (after[i] is { } trailing) result.Add(new(false, 0, trailing, false));
+        }
         return result;
     }
 

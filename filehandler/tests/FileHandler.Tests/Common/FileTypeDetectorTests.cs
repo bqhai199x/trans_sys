@@ -39,7 +39,7 @@ public sealed class FileTypeDetectorTests
     /// </summary>
     /// <returns>No return value.</returns>
     [Fact]
-    public void SanitizesOutputName() => Assert.Equal("guide.translated.md", FileTypeDetector.GetTranslatedFileName("C:\\secret\\guide.md"));
+    public void SanitizesOutputName() => Assert.Equal("guide.md", FileTypeDetector.GetTranslatedFileName("C:\\secret\\guide.md"));
 
     /// <summary>
     /// Verifies plain text detection ignores extension case and client directory paths.
@@ -55,8 +55,8 @@ public sealed class FileTypeDetectorTests
     {
         Assert.True(FileTypeDetector.TryDetect(name, out var type));
         Assert.Equal(FileType.PlainText, type);
-        Assert.Equal("guide.translated.txt", FileTypeDetector.GetTranslatedFileName(name, type));
-        Assert.Equal("guide.translated.txt", FileTypeDetector.GetTranslatedFileName(name));
+        Assert.Equal(name.EndsWith(".TXT", StringComparison.Ordinal) ? "guide.TXT" : "guide.txt", FileTypeDetector.GetTranslatedFileName(name, type));
+        Assert.Equal(name.EndsWith(".TXT", StringComparison.Ordinal) ? "guide.TXT" : "guide.txt", FileTypeDetector.GetTranslatedFileName(name));
     }
 
     /// <summary>
@@ -67,7 +67,27 @@ public sealed class FileTypeDetectorTests
     [Theory]
     [InlineData(null)]
     [InlineData("")]
-    [InlineData(".txt")]
     public void UsesPlainTextFallbackName(string? name) =>
-        Assert.Equal("document.translated.txt", FileTypeDetector.GetTranslatedFileName(name, FileType.PlainText));
+        Assert.Equal("document.txt", FileTypeDetector.GetTranslatedFileName(name, FileType.PlainText));
+
+    /// <summary>
+    /// Verifies every supported format preserves source basename, case and suffixes.
+    /// </summary>
+    /// <param name="source">Uploaded file name or path.</param>
+    /// <param name="expected">Exact attachment basename.</param>
+    /// <returns>No return value.</returns>
+    [Theory]
+    [InlineData("C:\\fakepath\\Guide.MD", "Guide.MD")]
+    [InlineData("../Report.TXT", "Report.TXT")]
+    [InlineData("C:\\folder/mixed\\Hợp đồng.DOCX", "Hợp đồng.DOCX")]
+    [InlineData("../../Budget.XLSX", "Budget.XLSX")]
+    [InlineData("Deck.PPTX", "Deck.PPTX")]
+    [InlineData("already.translated.md", "already.translated.md")]
+    [InlineData(".txt", ".txt")]
+    public void PreservesOriginalAttachmentName(string source, string expected)
+    {
+        Assert.True(FileTypeDetector.TryDetect(source, out var type));
+        Assert.Equal(expected, FileTypeDetector.GetTranslatedFileName(source, type));
+        Assert.Equal(expected, FileTypeDetector.GetTranslatedFileName(source));
+    }
 }

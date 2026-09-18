@@ -57,7 +57,8 @@ internal sealed class DebugTraceMiddleware(RequestDelegate next, IOptionsMonitor
                 Enabled = true,
                 CaptureContent = configured.CaptureContent,
                 MaxValueLength = Math.Clamp(configured.MaxValueLength, 64, 20000),
-                MaxEvents = Math.Clamp(configured.MaxEvents, 100, 100000)
+                MaxEvents = Math.Clamp(configured.MaxEvents, 100, 100000),
+                MaxTraceBytes = Math.Clamp(configured.MaxTraceBytes, 4096, 67108864)
             };
             var directory = _directory ??= Path.GetFullPath(configured.Directory, environment.ContentRootPath);
             if (!Directory.Exists(directory))
@@ -73,7 +74,7 @@ internal sealed class DebugTraceMiddleware(RequestDelegate next, IOptionsMonitor
             await next(context);
             return;
         }
-        using (session)
+        await using (session)
         {
             var previous = DebugTrace.Current;
             using var request = new TraceCall(session, previous, "API", "Request");

@@ -1,7 +1,3 @@
-# Không gian chia sẻ giữa AI agent
-
-Thư mục `.ai/` chứa tài liệu phối hợp giữa nhiều AI agent (Antigravity, Codex, v.v.). Trước khi bắt đầu task, đọc `.ai/CONVENTIONS.md` để nắm quy ước, sau đó đọc `plan.md`, `tasks.md`, `handoff.md` và `decisions.md`. Sau khi hoàn thành, cập nhật `tasks.md` và `handoff.md`. Chi tiết quy ước xem `.ai/CONVENTIONS.md`.
-
 # Quy tắc viết comment
 
 Áp dụng cho toàn bộ mã C# viết tay và test trong repository. Không sửa file sinh tự động trong `bin/` hoặc `obj/`.

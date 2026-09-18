@@ -5,6 +5,9 @@ using FileHandler.Api.Contracts;
 using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Markdown;
 using FileHandler.Api.Modules.PlainText;
+using FileHandler.Api.Modules.Word;
+using FileHandler.Api.Modules.Excel;
+using FileHandler.Api.Modules.PowerPoint;
 using Microsoft.AspNetCore.Mvc;
 
 namespace FileHandler.Api.Controllers;
@@ -29,14 +32,48 @@ public sealed class FilesController : ControllerBase
     private readonly PlainTextService _plainText;
 
     /// <summary>
+    /// Word document import and export service.
+    /// </summary>
+    private readonly WordService _word;
+
+    /// <summary>
+    /// Excel spreadsheet import and export service.
+    /// </summary>
+    private readonly ExcelService _excel;
+
+    /// <summary>
+    /// PowerPoint presentation import and export service.
+    /// </summary>
+    private readonly PowerPointService _powerPoint;
+
+    /// <summary>
+    /// Request translation limits.
+    /// </summary>
+    private readonly FileHandlingOptions _options;
+
+    /// <summary>
     /// Creates controller with format-specific services.
     /// </summary>
     /// <param name="markdown">Markdown import and export service.</param>
     /// <param name="plainText">Plain text import and export service.</param>
-    public FilesController(MarkdownService markdown, PlainTextService plainText)
+    /// <param name="word">Word document import and export service.</param>
+    /// <param name="excel">Excel spreadsheet import and export service.</param>
+    /// <param name="powerPoint">PowerPoint presentation import and export service.</param>
+    /// <param name="options">Configured request limits, or defaults for direct callers.</param>
+    public FilesController(
+        MarkdownService markdown,
+        PlainTextService plainText,
+        WordService word,
+        ExcelService excel,
+        PowerPointService powerPoint,
+        Microsoft.Extensions.Options.IOptions<FileHandlingOptions>? options = null)
     {
         _markdown = markdown;
         _plainText = plainText;
+        _word = word;
+        _excel = excel;
+        _powerPoint = powerPoint;
+        _options = options?.Value ?? new FileHandlingOptions();
     }
 
     /// <summary>
@@ -72,7 +109,7 @@ public sealed class FilesController : ControllerBase
     /// <returns>Task containing translated file content or error response.</returns>
     [HttpPost("export")]
     [Consumes("multipart/form-data")]
-    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK, "text/markdown", "text/plain")]
+    [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK, "text/markdown", "text/plain", WordService.ContentType, ExcelService.ContentType, PowerPointService.ContentType)]
     [ProducesResponseType(typeof(FileError[]), StatusCodes.Status400BadRequest, "application/json")]
     [ProducesResponseType(typeof(FileError[]), StatusCodes.Status413PayloadTooLarge, "application/json")]
     [ProducesResponseType(typeof(FileError[]), StatusCodes.Status415UnsupportedMediaType, "application/json")]
@@ -117,7 +154,7 @@ public sealed class FilesController : ControllerBase
         if (file is null)
             return BadRequest(Errors("missing_file", "Field file là bắt buộc."));
         if (!FileTypeDetector.TryDetect(file.FileName, out fileType))
-            return StatusCode(415, Errors("unsupported_file_type", "Chỉ hỗ trợ tệp .md và .txt."));
+            return StatusCode(415, Errors("unsupported_file_type", "Chỉ hỗ trợ tệp .md, .txt, .docx, .xlsx và .pptx."));
         return null;
     }
 
@@ -132,6 +169,9 @@ public sealed class FilesController : ControllerBase
         {
             FileType.Markdown => _markdown,
             FileType.PlainText => _plainText,
+            FileType.Word => _word,
+            FileType.Excel => _excel,
+            FileType.PowerPoint => _powerPoint,
             _ => throw new ArgumentOutOfRangeException(nameof(fileType))
         });
 
@@ -207,6 +247,12 @@ public sealed class FilesController : ControllerBase
             return false;
         }
 
+        if (json.RootElement.GetArrayLength() > _options.MaxUnits)
+        {
+            translations = null;
+            errorResult = StatusCode(StatusCodes.Status413PayloadTooLarge, Errors("too_many_units", "Số lượng bản dịch vượt giới hạn."));
+            return false;
+        }
         var list = new List<string>(json.RootElement.GetArrayLength());
         foreach (var element in json.RootElement.EnumerateArray())
         {
@@ -338,7 +384,8 @@ public sealed class FilesController : ControllerBase
     private IActionResult ErrorResult(IReadOnlyList<FileError> errors) =>
         DebugTrace.Trace("FilesController", "ErrorResult", () => new { errors }, _ =>
         {
-            var status = errors.Any(x => x.Code is "file_too_large" or "too_many_units" or "translation_too_long" or "output_too_large") ? 413 : 422;
+            var status = errors.Any(x => x.Code is "file_too_large" or "too_many_units" or "translation_too_long" or "output_too_large"
+                or "office_package_limit_exceeded" or "office_plan_limit_exceeded" or "office_translation_limit_exceeded" or "office_schema_limit_exceeded") ? 413 : 422;
             return StatusCode(status, errors);
         });
 
