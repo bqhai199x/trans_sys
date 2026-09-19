@@ -1,7 +1,6 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Office;
 
@@ -48,24 +47,7 @@ public sealed class OfficeExportSession : IDisposable
         OfficeProcessingOptions options,
         FileHandlingOptions fileHandlingOptions)
     {
-        using var trace = DebugTrace.Enter("OfficeExportSession", "Create", () => new
-        {
-            sourceHash = source.SourceHash,
-            outputLimit = fileHandlingOptions.MaxOutputBytes
-        });
-
-        try
-        {
-            trace.State("stage", () => "prepareSession");
-            var session = new OfficeExportSession(source, options, fileHandlingOptions);
-            trace.Return(new { outcome = "ready", maxOutputBytes = fileHandlingOptions.MaxOutputBytes });
-            return session;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+        return new OfficeExportSession(source, options, fileHandlingOptions);
     }
 
     /// <summary>
@@ -93,32 +75,14 @@ public sealed class OfficeExportSession : IDisposable
     /// <exception cref="InvalidOperationException">Serialized part exceeds maximum allowed part bytes.</exception>
     public void WritePart(string partUri, byte[] content)
     {
-        using var trace = DebugTrace.Enter("OfficeExportSession", "WritePart", () => new
-        {
-            partUri,
-            byteLength = content.Length
-        });
+        if (content.Length > _options.MaxPartBytes)
+            throw new FileLimitException("office_package_limit_exceeded");
 
-        try
-        {
-            trace.State("stage", () => "serializePart");
-            if (content.Length > _options.MaxPartBytes)
-                throw new FileLimitException("office_package_limit_exceeded");
+        var total = _touchedBytes - (_touchedParts.TryGetValue(partUri, out var previous) ? previous.Length : 0) + content.Length;
+        if (total > _options.MaxExpandedBytes) throw new FileLimitException("office_package_limit_exceeded");
+        _touchedBytes = total;
 
-            var total = _touchedBytes - (_touchedParts.TryGetValue(partUri, out var previous) ? previous.Length : 0) + content.Length;
-            if (total > _options.MaxExpandedBytes) throw new FileLimitException("office_package_limit_exceeded");
-            _touchedBytes = total;
-
-            var hash = Convert.ToHexStringLower(SHA256.HashData(content));
-            _touchedParts[partUri] = content;
-
-            trace.Return(new { outcome = "success", partUri, bytes = content.Length, hash });
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+        _touchedParts[partUri] = content;
     }
 
     /// <summary>
@@ -143,62 +107,39 @@ public sealed class OfficeExportSession : IDisposable
     /// <returns>Task producing assembled Office output.</returns>
     public async Task<OfficeOutput> FinalizeAsync(CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("OfficeExportSession", "FinalizeAsync", () => new
-        {
-            touchedPartsCount = _touchedParts.Count,
-            outputLimit = _fileHandlingOptions.MaxOutputBytes
-        });
+        using var outputMs = new MemoryStream();
+        using var boundedStream = new OfficeBoundedStream(outputMs, _fileHandlingOptions.MaxOutputBytes);
 
-        try
+        using (var originalZip = new ZipArchive(new MemoryStream(_source.OriginalBytes), ZipArchiveMode.Read, false))
+        using (var targetZip = new ZipArchive(boundedStream, ZipArchiveMode.Create, true))
         {
-            trace.State("stage", () => "writeEntries");
-            using var outputMs = new MemoryStream();
-            using var boundedStream = new OfficeBoundedStream(outputMs, _fileHandlingOptions.MaxOutputBytes);
-
-            using (var originalZip = new ZipArchive(new MemoryStream(_source.OriginalBytes), ZipArchiveMode.Read, false))
-            using (var targetZip = new ZipArchive(boundedStream, ZipArchiveMode.Create, true))
+            var expandedBytes = originalZip.Entries.Sum(e => _touchedParts.TryGetValue("/" + e.FullName.TrimStart('/'), out var replacement) ? replacement.LongLength : e.Length);
+            if (expandedBytes > _options.MaxExpandedBytes) throw new FileLimitException("office_package_limit_exceeded");
+            foreach (var entry in originalZip.Entries)
             {
-                var expandedBytes = originalZip.Entries.Sum(e => _touchedParts.TryGetValue("/" + e.FullName.TrimStart('/'), out var replacement) ? replacement.LongLength : e.Length);
-                if (expandedBytes > _options.MaxExpandedBytes) throw new FileLimitException("office_package_limit_exceeded");
-                var entryIndex = 0;
-                foreach (var entry in originalZip.Entries)
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var canonicalUri = "/" + entry.FullName.Replace('\\', '/').TrimStart('/');
+                var targetEntry = targetZip.CreateEntry(entry.FullName, CompressionLevel.Optimal);
+
+                if (_touchedParts.TryGetValue(canonicalUri, out var touchedBytes))
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    entryIndex++;
-
-                    var canonicalUri = "/" + entry.FullName.Replace('\\', '/').TrimStart('/');
-                    var targetEntry = targetZip.CreateEntry(entry.FullName, CompressionLevel.Optimal);
-
-                    if (_touchedParts.TryGetValue(canonicalUri, out var touchedBytes))
-                    {
-                        using var targetStream = targetEntry.Open();
-                        await targetStream.WriteAsync(touchedBytes, cancellationToken).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        using var sourceStream = entry.Open();
-                        using var targetStream = targetEntry.Open();
-                        await sourceStream.CopyToAsync(targetStream, cancellationToken).ConfigureAwait(false);
-                    }
+                    using var targetStream = targetEntry.Open();
+                    await targetStream.WriteAsync(touchedBytes, cancellationToken).ConfigureAwait(false);
+                }
+                else
+                {
+                    using var sourceStream = entry.Open();
+                    using var targetStream = targetEntry.Open();
+                    await sourceStream.CopyToAsync(targetStream, cancellationToken).ConfigureAwait(false);
                 }
             }
+        }
 
-            trace.State("stage", () => "closeArchive");
-            var finalBytes = outputMs.ToArray();
-            var outputHash = Convert.ToHexStringLower(SHA256.HashData(finalBytes));
+        var finalBytes = outputMs.ToArray();
+        var outputHash = Convert.ToHexStringLower(SHA256.HashData(finalBytes));
 
-            trace.Return(new { outcome = "success", outputBytes = finalBytes.Length, outputHash });
-            return new OfficeOutput(finalBytes, outputHash, finalBytes.Length, $"Exported {_touchedParts.Count} touched parts.");
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+        return new OfficeOutput(finalBytes, outputHash, finalBytes.Length, $"Exported {_touchedParts.Count} touched parts.");
     }
 
     /// <summary>

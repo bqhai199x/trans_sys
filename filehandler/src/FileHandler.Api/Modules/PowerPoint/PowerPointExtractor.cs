@@ -4,7 +4,6 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Presentation;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Office;
 using P = DocumentFormat.OpenXml.Presentation;
 using A = DocumentFormat.OpenXml.Drawing;
@@ -54,87 +53,60 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
     /// <returns>Extraction plan.</returns>
     public PowerPointPlan Analyze(OfficeSource source, OfficeInventory inventory, CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("PowerPointExtractor", "Analyze", () => new { sourceHash = source.SourceHash });
+        using var ms = new MemoryStream(source.OriginalBytes);
+        using var doc = PresentationDocument.Open(ms, false, OfficeTextBindings.Settings(_options));
 
-        try
+        if (doc.PresentationPart?.Presentation?.SlideIdList is null)
+            throw new InvalidOperationException("PowerPoint package missing presentation or slide list.");
+
+        var units = new OfficeUnitCollection(_options, _codec.MaxUnits);
+        var slides = new List<PowerPointSlideSnapshot>();
+
+        var slideIndex = 0;
+
+        foreach (var slideId in doc.PresentationPart.Presentation.SlideIdList.Elements<SlideId>())
         {
-            trace.State("stage", () => "selectSlides");
-            using var ms = new MemoryStream(source.OriginalBytes);
-            using var doc = PresentationDocument.Open(ms, false, OfficeTextBindings.Settings(_options));
+            cancellationToken.ThrowIfCancellationRequested();
+            slideIndex++;
 
-            if (doc.PresentationPart?.Presentation?.SlideIdList is null)
-                throw new InvalidOperationException("PowerPoint package missing presentation or slide list.");
+            var idVal = slideId.Id?.Value.ToString() ?? slideIndex.ToString();
+            var relId = slideId.RelationshipId?.Value;
 
-            var units = new OfficeUnitCollection(_options, _codec.MaxUnits);
-            var slides = new List<PowerPointSlideSnapshot>();
+            if (string.IsNullOrEmpty(relId) || !doc.PresentationPart.TryGetPartById(relId, out var part) || part is not SlidePart slidePart)
+                continue;
 
-            trace.State("stage", () => "walkShapes");
-            var slideIndex = 0;
+            var isHidden = slidePart.Slide?.Show?.Value == false;
+            var slideUri = "/" + slidePart.Uri.ToString().TrimStart('/');
+            var shapeTree = slidePart.Slide?.CommonSlideData?.ShapeTree;
+            var shapeCount = shapeTree?.Descendants<P.Shape>().Count() ?? 0;
 
-            foreach (var slideId in doc.PresentationPart.Presentation.SlideIdList.Elements<SlideId>())
+            if (isHidden || shapeTree is null)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                slideIndex++;
-
-                var idVal = slideId.Id?.Value.ToString() ?? slideIndex.ToString();
-                var relId = slideId.RelationshipId?.Value;
-
-                if (string.IsNullOrEmpty(relId) || !doc.PresentationPart.TryGetPartById(relId, out var part) || part is not SlidePart slidePart)
-                    continue;
-
-                var isHidden = slidePart.Slide?.Show?.Value == false;
-                var slideUri = "/" + slidePart.Uri.ToString().TrimStart('/');
-                var shapeTree = slidePart.Slide?.CommonSlideData?.ShapeTree;
-                var shapeCount = shapeTree?.Descendants<P.Shape>().Count() ?? 0;
-
-                using var slideItem = DebugTrace.Item(slideIndex);
-                slideItem.State("slide", () => new
-                {
-                    slideId = idVal,
-                    uri = slideUri,
-                    show = !isHidden,
-                    shapeCount
-                });
-
-                if (isHidden || shapeTree is null)
-                {
-                    slides.Add(new PowerPointSlideSnapshot(idVal, slideUri, !isHidden, shapeCount));
-                    continue;
-                }
-
-                // Check for charts or diagrams on this visible slide
-                if (slidePart.ChartParts.Any() || slidePart.DiagramDataParts.Any())
-                {
-                    throw new InvalidOperationException("Slide contains Chart or SmartArt diagrams which are not supported for translation in office-v1.");
-                }
-
-                WalkShapeTree(shapeTree, slideUri, idVal, units, cancellationToken);
-                slides.Add(new PowerPointSlideSnapshot(idVal, slideUri, true, shapeCount));
+                slides.Add(new PowerPointSlideSnapshot(idVal, slideUri, !isHidden, shapeCount));
+                continue;
             }
 
-            trace.State("stage", () => "buildUnits");
-            long totalPlanChars = 0;
-            foreach (var u in units)
-                totalPlanChars += u.EncodedSource.Length;
+            // Check for charts or diagrams on this visible slide
+            if (slidePart.ChartParts.Any() || slidePart.DiagramDataParts.Any())
+            {
+                throw new InvalidOperationException("Slide contains Chart or SmartArt diagrams which are not supported for translation in office-v1.");
+            }
 
-            if (totalPlanChars > _options.MaxPlanChars)
-                throw new FileLimitException("office_plan_limit_exceeded");
+            WalkShapeTree(shapeTree, slideUri, idVal, units, cancellationToken);
+            slides.Add(new PowerPointSlideSnapshot(idVal, slideUri, true, shapeCount));
+        }
 
-            if (units.Count > _options.MaxObjects || units.Any(u => u.Slots.Count + u.Anchors.Count > _options.MaxTokensPerUnit))
-                throw new FileLimitException("office_plan_limit_exceeded");
+        long totalPlanChars = 0;
+        foreach (var u in units)
+            totalPlanChars += u.EncodedSource.Length;
 
-            trace.Return(new { outcome = "success", unitCount = units.Count, slideCount = slides.Count });
-            return new PowerPointPlan(source.SourceHash, units, slides);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+        if (totalPlanChars > _options.MaxPlanChars)
+            throw new FileLimitException("office_plan_limit_exceeded");
+
+        if (units.Count > _options.MaxObjects || units.Any(u => u.Slots.Count + u.Anchors.Count > _options.MaxTokensPerUnit))
+            throw new FileLimitException("office_plan_limit_exceeded");
+
+        return new PowerPointPlan(source.SourceHash, units, slides);
     }
 
     /// <summary>
@@ -172,9 +144,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
                 foreach (var p in textBody.Elements<A.Paragraph>())
                 {
                     paraOrdinal++;
-                    using var unitTrace = DebugTrace.Unit(units.Count, "extract");
                     var template = DrawingTextCodec.ReadParagraph(p, shapeLoc, paraOrdinal, _options);
-                    if (template is null) unitTrace.Discard();
                     if (template is not null)
                     {
                         var unitId = OfficeIdentity.CreateUnitId(

@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using System.Text;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
-using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Office;
 
@@ -90,8 +89,6 @@ internal static class OfficeTextBindings
     /// <returns>No return value.</returns>
     internal static void Apply(OpenXmlElement root, OfficeTranslationUnit unit, OfficeDecodedUnit decoded)
     {
-        using var unitTrace = DebugTrace.Unit(unit.Index, "apply");
-        unitTrace.State("decoded", () => decoded);
         var index = Targets.GetValue(root, r => Paths.GetValue(r, Index).ToDictionary(p => Key(p.Value), p => p.Key, StringComparer.Ordinal));
         foreach (var (key, edit) in BuildChanges(unit, decoded, null))
         {
@@ -99,7 +96,6 @@ internal static class OfficeTextBindings
                 Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(text.Text))) != edit.SourceHash)
                 throw new InvalidOperationException("Source text binding mismatch.");
             text.Text = edit.Value;
-            unitTrace.State("scalar", () => new { path = key, edit.SourceHash, text = text.Text });
             if (text is DocumentFormat.OpenXml.Wordprocessing.Text word && text.Text.Any(char.IsWhiteSpace))
                 word.Space = SpaceProcessingModeValues.Preserve;
             if (text is DocumentFormat.OpenXml.Spreadsheet.Text cell && text.Text.Any(char.IsWhiteSpace))
@@ -163,8 +159,6 @@ internal static class OfficeTextBindings
         for (var i = 0; i < units.Count; i++)
         {
             var unit = units[i];
-            using var unitTrace = DebugTrace.Unit(unit.Index, "prepare");
-            unitTrace.State("changed", () => Changed(unit, decoded[i]));
             if (!Changed(unit, decoded[i])) continue;
             var uri = unit.Location.PartUri;
             if (!parts.TryGetValue(uri, out var edits)) parts[uri] = edits = new(StringComparer.Ordinal);
@@ -216,7 +210,6 @@ internal static class OfficeTextBindings
             }
             output.Append(original, offset, original.Length - offset);
             result.Add(key, new(spans[0].Binding.OriginalValueHash, output.ToString()));
-            DebugTrace.Current?.State("replacement", () => new { path = key, original, replacement = output.ToString() });
         }
         return result;
     }

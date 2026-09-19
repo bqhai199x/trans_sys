@@ -43,43 +43,4 @@ public sealed class ExcelTableReader
         }
         return tables;
     }
-
-    /// <summary>
-    /// Checks whether a cell reference falls within protected header or totals rows of defined tables.
-    /// </summary>
-    /// <param name="cellReference">A1-style cell reference.</param>
-    /// <param name="tables">Discovered worksheet table snapshots.</param>
-    /// <returns>True when cell is part of table header or totals row; otherwise false.</returns>
-    public static bool IsProtectedTableIdentifier(string cellReference, IReadOnlyList<ExcelTableSnapshot> tables)
-    {
-        if (!ExcelCellResolver.TryParseCoordinates(cellReference, out var col, out var row))
-            return false;
-
-        foreach (var tbl in tables)
-        {
-            if (string.IsNullOrEmpty(tbl.Reference))
-                continue;
-
-            var parts = tbl.Reference.Split(':');
-            if (parts.Length != 2)
-                continue;
-
-            if (!ExcelCellResolver.TryParseCoordinates(parts[0], out var startCol, out var startRow) ||
-                !ExcelCellResolver.TryParseCoordinates(parts[1], out var endCol, out var endRow))
-                continue;
-
-            if (col < startCol || col > endCol)
-                continue;
-
-            // Check if cell falls in header rows
-            if (tbl.HeaderRowCount > 0 && row >= startRow && row < startRow + tbl.HeaderRowCount)
-                return true;
-
-            // Check if cell falls in totals rows
-            if (tbl.TotalsRowCount > 0 && row <= endRow && row > endRow - tbl.TotalsRowCount)
-                return true;
-        }
-
-        return false;
-    }
 }

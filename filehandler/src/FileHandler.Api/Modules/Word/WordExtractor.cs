@@ -3,7 +3,6 @@ using System.Text;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Office;
 using W = DocumentFormat.OpenXml.Wordprocessing;
 using V = DocumentFormat.OpenXml.Vml;
@@ -54,12 +53,7 @@ public sealed class WordExtractor : IWordExtractor
     /// <returns>Extraction plan.</returns>
     public WordPlan Analyze(OfficeSource source, OfficeInventory inventory, CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("WordExtractor", "Analyze", () => new { sourceHash = source.SourceHash });
-
-        try
-        {
-            trace.State("stage", () => "selectStories");
-            using var ms = new MemoryStream(source.OriginalBytes);
+        using var ms = new MemoryStream(source.OriginalBytes);
             using var doc = WordprocessingDocument.Open(ms, false, OfficeTextBindings.Settings(_options));
 
             if (doc.MainDocumentPart is null)
@@ -72,7 +66,6 @@ public sealed class WordExtractor : IWordExtractor
             var stories = new List<WordStorySnapshot>();
             var tables = new List<WordTableSnapshot>();
 
-            trace.State("stage", () => "walkStories");
             var mainUri = "/" + doc.MainDocumentPart.Uri.ToString().TrimStart('/');
             stories.Add(new WordStorySnapshot("Body", mainUri, 1));
 
@@ -141,7 +134,6 @@ public sealed class WordExtractor : IWordExtractor
                 }
             }
 
-            trace.State("stage", () => "buildUnits");
             tables.Clear();
             var storyParts = new OpenXmlPart[] { doc.MainDocumentPart }.Concat(doc.MainDocumentPart.HeaderParts)
                 .Concat(doc.MainDocumentPart.FooterParts)
@@ -165,18 +157,7 @@ public sealed class WordExtractor : IWordExtractor
             if (units.Count > _options.MaxObjects || units.Any(u => u.Slots.Count + u.Anchors.Count > _options.MaxTokensPerUnit))
                 throw new FileLimitException("office_plan_limit_exceeded");
 
-            trace.Return(new { outcome = "success", unitCount = units.Count, storyCount = stories.Count, tableCount = tables.Count });
             return new WordPlan(source.SourceHash, units, stories, tables);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
     }
 
     /// <summary>
@@ -233,24 +214,20 @@ public sealed class WordExtractor : IWordExtractor
         OpenXmlElement partRoot,
         OfficeUnitCollection units)
     {
-        using (var unitTrace = DebugTrace.Unit(units.Count, "extract"))
+        var builder = new OfficeTemplateBuilder(_options);
+        var fieldDepth = 0;
+        ReadInline(paragraph, partUri, builder, ref fieldDepth);
+        if (fieldDepth != 0)
+            throw new InvalidOperationException("Fields crossing paragraph boundaries are unsupported.");
+        var template = builder.Build();
+        if (template is not null)
         {
-            var builder = new OfficeTemplateBuilder(_options);
-            var fieldDepth = 0;
-            ReadInline(paragraph, partUri, builder, ref fieldDepth);
-            if (fieldDepth != 0)
-                throw new InvalidOperationException("Fields crossing paragraph boundaries are unsupported.");
-            var template = builder.Build();
-            if (template is not null)
-            {
-                var path = OfficeTextBindings.Path(paragraph);
-                var id = OfficeIdentity.CreateUnitId("office-v1", string.Empty, OfficeFormat.Word,
-                    partUri, OfficeObjectKind.Paragraph, path, units.Count);
-                units.Add(new OfficeTranslationUnit(units.Count, id, id, new OfficeLocation(partUri, path),
-                    template.Mode, _codec.Encode(template), template.Slots, template.Anchors, template.Bindings,
-                    Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Concat(template.Slots.Select(s => s.OriginalText)))))));
-            }
-            else unitTrace.Discard();
+            var path = OfficeTextBindings.Path(paragraph);
+            var id = OfficeIdentity.CreateUnitId("office-v1", string.Empty, OfficeFormat.Word,
+                partUri, OfficeObjectKind.Paragraph, path, units.Count);
+            units.Add(new OfficeTranslationUnit(units.Count, id, id, new OfficeLocation(partUri, path),
+                template.Mode, _codec.Encode(template), template.Slots, template.Anchors, template.Bindings,
+                Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(string.Concat(template.Slots.Select(s => s.OriginalText)))))));
         }
         foreach (var textbox in paragraph.Descendants<W.TextBoxContent>().Where(t => t.Ancestors<W.Paragraph>().FirstOrDefault() == paragraph))
             foreach (var nested in textbox.Descendants<W.Paragraph>().Where(p => p.Ancestors<W.TextBoxContent>().FirstOrDefault() == textbox))

@@ -1,5 +1,4 @@
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using Markdig;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
@@ -32,70 +31,44 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>Translation units, source metadata, and extraction errors.</returns>
     public MarkdownExtraction Extract(MarkdownSource source, int maxUnits, CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "Extract", () => new { source, maxUnits, cancellationToken });
-        try
-        {
-            var document = ParseDocument(source.Text);
-            var allocator = new MarkerAllocationContext([]);
-            var units = new List<MarkdownUnit>();
+        var document = ParseDocument(source.Text);
+        var allocator = new MarkerAllocationContext([]);
+        var units = new List<MarkdownUnit>();
 
-            foreach (var block in document.Descendants())
+        foreach (var block in document.Descendants())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (block is FencedCodeBlock fence)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (block is FencedCodeBlock fence)
+                foreach (var label in MermaidCodec.Extract(fence, cancellationToken))
                 {
-                    foreach (var label in MermaidCodec.Extract(fence, cancellationToken))
+                    units.Add(new(label.Start, label.End, label.Text, new Dictionary<int, MarkerDefinition>(),
+                        source.Lines.GetRange(label.Start, label.End), false, "\n", false)
                     {
-                        using var labelTrace = DebugTrace.Unit(units.Count, "extract");
-                        units.Add(new(label.Start, label.End, label.Text, new Dictionary<int, MarkerDefinition>(),
-                            source.Lines.GetRange(label.Start, label.End), false, "\n", false)
-                        {
-                            IsMermaidLabel = true,
-                            MermaidQuoted = label.Quoted
-                        });
-                        DebugTrace.ConfirmUnit();
-                        labelTrace.State("unit", () => units[^1]);
-                        if (units.Count > maxUnits)
-                            return trace.Return<MarkdownExtraction>(new(source, [], [new("too_many_units", $"Tài liệu vượt giới hạn {maxUnits} đơn vị dịch.")]));
-                    }
-                    continue;
+                        IsMermaidLabel = true,
+                        MermaidQuoted = label.Quoted
+                    });
+                    if (units.Count > maxUnits)
+                        return new(source, [], [new("too_many_units", $"Tài liệu vượt giới hạn {maxUnits} đơn vị dịch.")]);
                 }
-                if (block is not LeafBlock { Inline: not null } leaf)
-                    continue;
-                if (block is CodeBlock)
-                    continue;
-                using var item = DebugTrace.Unit(units.Count, "extract");
-                item.State("block", () => new { type = leaf.GetType().Name, line = leaf.Line + 1, start = leaf.Span.Start, end = leaf.Span.End + 1 });
-                var encoded = EncodeContainer(leaf.Inline, source.Text, allocator);
-                if (encoded is null || !encoded.Tokens.Any(t => !t.IsMarker && !string.IsNullOrWhiteSpace(t.Value)))
-                {
-                    item.State("outcome", () => "noTranslatableText");
-                    item.Discard();
-                    continue;
-                }
-                var (newlineReplacement, hasSoftBreak) = FindNewlinePolicy(leaf.Inline, source.Text);
-                var wire = MarkdownTokenCodec.Encode(encoded);
-                units.Add(new(encoded.Start, encoded.End, wire.Text, encoded.Markers, source.Lines.GetRange(encoded.Start, encoded.End), leaf is HeadingBlock, newlineReplacement, hasSoftBreak, wire.Template));
-                DebugTrace.ConfirmUnit();
-                item.State("unitIndex", () => units.Count - 1);
-                item.State("unit", () => units[^1]);
-                if (units.Count > maxUnits)
-                {
-                    trace.State("unitCount", () => units.Count);
-                    return trace.Return<MarkdownExtraction>(new(source, [], [new("too_many_units", $"Tài liệu vượt giới hạn {maxUnits} đơn vị dịch.")]));
-                }
+                continue;
             }
+            if (block is not LeafBlock { Inline: not null } leaf)
+                continue;
+            if (block is CodeBlock)
+                continue;
+            var encoded = EncodeContainer(leaf.Inline, source.Text, allocator);
+            if (encoded is null || !encoded.Tokens.Any(t => !t.IsMarker && !string.IsNullOrWhiteSpace(t.Value)))
+                continue;
+            var (newlineReplacement, hasSoftBreak) = FindNewlinePolicy(leaf.Inline, source.Text);
+            var wire = MarkdownTokenCodec.Encode(encoded);
+            units.Add(new(encoded.Start, encoded.End, wire.Text, encoded.Markers, source.Lines.GetRange(encoded.Start, encoded.End), leaf is HeadingBlock, newlineReplacement, hasSoftBreak, wire.Template));
+            if (units.Count > maxUnits)
+                return new(source, [], [new("too_many_units", $"Tài liệu vượt giới hạn {maxUnits} đơn vị dịch.")]);
+        }
 
-            var hasInternalLinks = document.Descendants<LinkInline>().Any(x => x.Url?.StartsWith('#') == true);
-            trace.State("unitCount", () => units.Count);
-            trace.State("hasInternalLinks", () => hasInternalLinks);
-            return trace.Return<MarkdownExtraction>(new(source, units, [], hasInternalLinks));
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var hasInternalLinks = document.Descendants<LinkInline>().Any(x => x.Url?.StartsWith('#') == true);
+        return new(source, units, [], hasInternalLinks);
     }
 
     /// <summary>
@@ -103,8 +76,7 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// </summary>
     /// <param name="text">Markdown source text.</param>
     /// <returns>Parsed Markdown document.</returns>
-    internal MarkdownDocument ParseDocument(string text) =>
-        DebugTrace.Trace("MarkdownExtractor", "ParseDocument", () => new { text }, _ => Markdig.Markdown.Parse(text, _pipeline));
+    internal MarkdownDocument ParseDocument(string text) => Markdig.Markdown.Parse(text, _pipeline);
 
     /// <summary>
     /// Validates translated Markdown structural parity against source.
@@ -114,26 +86,15 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>Structural validation errors, if any.</returns>
     public IReadOnlyList<FileError> ValidateStructure(string original, string candidate)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "ValidateStructure", () => new { original, candidate });
         try
         {
-            try
-            {
-                var before = BuildStructureSignature(ParseDocument(original), original);
-                trace.State("signature", () => before);
-                var after = BuildStructureSignature(ParseDocument(candidate), candidate);
-                trace.State("signature", () => after);
-                return trace.Return<IReadOnlyList<FileError>>(before.SequenceEqual(after, StringComparer.Ordinal) ? [] : [new("invalid_structure", "Bản dịch làm thay đổi cấu trúc Markdown được bảo vệ.")]);
-            }
-            catch
-            {
-                return trace.Return<IReadOnlyList<FileError>>([new("invalid_structure", "Không thể parse lại cấu trúc Markdown sau khi áp dụng bản dịch.")]);
-            }
+            var before = BuildStructureSignature(ParseDocument(original), original);
+            var after = BuildStructureSignature(ParseDocument(candidate), candidate);
+            return before.SequenceEqual(after, StringComparer.Ordinal) ? [] : [new("invalid_structure", "Bản dịch làm thay đổi cấu trúc Markdown được bảo vệ.")];
         }
-        catch (Exception traceError)
+        catch
         {
-            trace.Error(traceError);
-            throw;
+            return [new("invalid_structure", "Không thể parse lại cấu trúc Markdown sau khi áp dụng bản dịch.")];
         }
     }
 
@@ -145,52 +106,43 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>Ordered block types, link targets, and protected content.</returns>
     private static IReadOnlyList<string> BuildStructureSignature(MarkdownDocument document, string source)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "BuildStructureSignature", () => new { document, source });
-        try
+        var signature = new List<string>();
+        foreach (var item in document.Descendants())
         {
-            var signature = new List<string>();
-            foreach (var item in document.Descendants())
+            if (item is Block block)
+                signature.Add($"B:{block.GetType().FullName}");
+            switch (item)
             {
-                if (item is Block block)
-                    signature.Add($"B:{block.GetType().FullName}");
-                switch (item)
-                {
-                    case FencedCodeBlock fence:
-                        var labels = MermaidCodec.Extract(fence, default).ToArray();
-                        var offset = fence.Span.Start;
-                        foreach (var label in labels)
-                        {
-                            signature.Add("C:" + SafeSlice(source, offset, label.Start));
-                            offset = label.End;
-                        }
-                        signature.Add("C:" + SafeSlice(source, offset, fence.Span.End + 1));
-                        break;
-                    case LineBreakInline { IsHard: true } lineBreak:
-                        signature.Add($"H:{lineBreak.IsBackslash}");
-                        break;
-                    case EmphasisInline emphasis:
-                        signature.Add($"E:{emphasis.DelimiterChar}:{emphasis.DelimiterCount}");
-                        break;
-                    case LinkInline link:
-                        signature.Add($"L:{link.IsImage}:{link.IsAutoLink}:{link.Url}");
-                        break;
-                    case CodeInline or AutolinkInline or HtmlInline:
+                case FencedCodeBlock fence:
+                    var labels = MermaidCodec.Extract(fence, default).ToArray();
+                    var offset = fence.Span.Start;
+                    foreach (var label in labels)
+                    {
+                        signature.Add("C:" + SafeSlice(source, offset, label.Start));
+                        offset = label.End;
+                    }
+                    signature.Add("C:" + SafeSlice(source, offset, fence.Span.End + 1));
+                    break;
+                case LineBreakInline { IsHard: true } lineBreak:
+                    signature.Add($"H:{lineBreak.IsBackslash}");
+                    break;
+                case EmphasisInline emphasis:
+                    signature.Add($"E:{emphasis.DelimiterChar}:{emphasis.DelimiterCount}");
+                    break;
+                case LinkInline link:
+                    signature.Add($"L:{link.IsImage}:{link.IsAutoLink}:{link.Url}");
+                    break;
+                case CodeInline or AutolinkInline or HtmlInline:
+                    signature.Add($"P:{item.GetType().FullName}:{SafeSlice(source, item.Span.Start, item.Span.End + 1)}");
+                    break;
+                default:
+                    if (item.GetType().Name.Contains("Math", StringComparison.Ordinal))
                         signature.Add($"P:{item.GetType().FullName}:{SafeSlice(source, item.Span.Start, item.Span.End + 1)}");
-                        break;
-                    default:
-                        if (item.GetType().Name.Contains("Math", StringComparison.Ordinal))
-                            signature.Add($"P:{item.GetType().FullName}:{SafeSlice(source, item.Span.Start, item.Span.End + 1)}");
-                        break;
-                }
+                    break;
             }
+        }
 
-            return trace.Return<IReadOnlyList<string>>(signature);
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        return signature;
     }
 
     /// <summary>
@@ -202,29 +154,19 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>Encoded text and source span, or null for empty or invalid spans.</returns>
     private static EncodedInline? EncodeContainer(ContainerInline container, string source, MarkerAllocationContext allocator)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "EncodeContainer", () => new { container, source, allocator });
-        try
-        {
-            var children = container.ToList();
-            if (children.Count == 0)
-                return trace.Return<EncodedInline?>(null);
-            var start = children.Min(x => x.Span.Start);
-            var end = children.Max(x => x.Span.End) + 1;
-            if (start < 0 || end <= start || end > source.Length)
-                return trace.Return<EncodedInline?>(null);
-            var markers = new Dictionary<int, MarkerDefinition>();
-            var sb = new List<MarkerToken>();
-            foreach (var inline in children)
-                EncodeInline(inline, source, allocator, markers, sb);
-            return trace.Return<EncodedInline?>(new(sb, start, end, markers));
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var children = container.ToList();
+        if (children.Count == 0)
+            return null;
+        var start = children.Min(x => x.Span.Start);
+        var end = children.Max(x => x.Span.End) + 1;
+        if (start < 0 || end <= start || end > source.Length)
+            return null;
+        var markers = new Dictionary<int, MarkerDefinition>();
+        var sb = new List<MarkerToken>();
+        foreach (var inline in children)
+            EncodeInline(inline, source, allocator, markers, sb);
+        return new(sb, start, end, markers);
     }
-
     /// <summary>
     /// Finds newline sequence and prefix to preserve in translations.
     /// </summary>
@@ -233,34 +175,25 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>Newline replacement and soft line break flag.</returns>
     private static (string Replacement, bool HasSoftBreak) FindNewlinePolicy(ContainerInline container, string source)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "FindNewlinePolicy", () => new { container, source });
-        try
+        var children = GetAllInlines(container).ToList();
+        for (var i = 0; i < children.Count; i++)
         {
-            var children = GetAllInlines(container).ToList();
-            for (var i = 0; i < children.Count; i++)
-            {
-                if (children[i] is not LineBreakInline { IsHard: false } lineBreak)
-                    continue;
-                var next = i + 1 < children.Count ? children[i + 1].Span.Start : lineBreak.Span.End + 1;
-                var start = Math.Max(0, lineBreak.Span.Start);
-                var end = Math.Min(source.Length, Math.Max(start, next));
-                var raw = source.AsSpan(start, end - start);
-                var newlineAt = raw.IndexOfAny('\r', '\n');
-                if (newlineAt >= 0)
-                    return trace.Return<(string Replacement, bool HasSoftBreak)>((raw[newlineAt..].ToString(), true));
-                return trace.Return<(string Replacement, bool HasSoftBreak)>(("\n", true));
-            }
+            if (children[i] is not LineBreakInline { IsHard: false } lineBreak)
+                continue;
+            var next = i + 1 < children.Count ? children[i + 1].Span.Start : lineBreak.Span.End + 1;
+            var start = Math.Max(0, lineBreak.Span.Start);
+            var end = Math.Min(source.Length, Math.Max(start, next));
+            var raw = source.AsSpan(start, end - start);
+            var newlineAt = raw.IndexOfAny('\r', '\n');
+            if (newlineAt >= 0)
+                return (raw[newlineAt..].ToString(), true);
+            return ("\n", true);
+        }
 
-            var first = source.IndexOfAny(['\r', '\n']);
-            if (first < 0)
-                return trace.Return<(string Replacement, bool HasSoftBreak)>(("\n", false));
-            return trace.Return<(string Replacement, bool HasSoftBreak)>(source[first] == '\r' && first + 1 < source.Length && source[first + 1] == '\n' ? ("\r\n", false) : (source[first].ToString(), false));
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var first = source.IndexOfAny(['\r', '\n']);
+        if (first < 0)
+            return ("\n", false);
+        return source[first] == '\r' && first + 1 < source.Length && source[first + 1] == '\n' ? ("\r\n", false) : (source[first].ToString(), false);
     }
 
     /// <summary>
@@ -292,42 +225,28 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>No return value.</returns>
     private static void EncodeInline(Inline inline, string source, MarkerAllocationContext allocator, Dictionary<int, MarkerDefinition> markers, List<MarkerToken> sb)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "EncodeInline", () => new { inline });
-        trace.State("buffer", () => new { text = sb, markerCount = markers.Count });
-        try
+        switch (inline)
         {
-            switch (inline)
-            {
-                case LiteralInline literal:
-                    EncodeLiteral(literal, source, allocator, markers, sb);
-                    break;
-                case LineBreakInline { IsHard: true } lineBreak:
-                    AddHardBreak(lineBreak, source, allocator, markers, sb);
-                    break;
-                case LineBreakInline softBreak:
-                    AddSoftBreak(softBreak, source, allocator, markers, sb);
-                    break;
-                case CodeInline:
-                case AutolinkInline:
-                case HtmlInline:
-                    AddProtected(inline, source, allocator, markers, sb);
-                    break;
-                case ContainerInline nested:
-                    AddFormatting(nested, source, allocator, markers, sb);
-                    break;
-                default:
-                    AddProtected(inline, source, allocator, markers, sb);
-                    break;
-            }
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
-        finally
-        {
-            trace.State("buffer", () => new { text = sb, markerCount = markers.Count });
+            case LiteralInline literal:
+                EncodeLiteral(literal, sb);
+                break;
+            case LineBreakInline { IsHard: true } lineBreak:
+                AddHardBreak(lineBreak, source, allocator, markers, sb);
+                break;
+            case LineBreakInline softBreak:
+                AddSoftBreak(softBreak, source, allocator, markers, sb);
+                break;
+            case CodeInline:
+            case AutolinkInline:
+            case HtmlInline:
+                AddProtected(inline, source, allocator, markers, sb);
+                break;
+            case ContainerInline nested:
+                AddFormatting(nested, source, allocator, markers, sb);
+                break;
+            default:
+                AddProtected(inline, source, allocator, markers, sb);
+                break;
         }
     }
 
@@ -361,58 +280,36 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>No return value.</returns>
     private static void AddHardBreak(LineBreakInline lineBreak, string source, MarkerAllocationContext allocator, Dictionary<int, MarkerDefinition> markers, List<MarkerToken> sb)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "AddHardBreak", () => new { lineBreak });
-        try
-        {
-            var id = allocator.AllocateId();
-            var start = lineBreak.Span.Start;
-            while (start > 0 && source[start - 1] == ' ')
-                start--;
-            if (start > 0 && source[start - 1] == '\\')
-                start--;
+        var id = allocator.AllocateId();
+        var start = lineBreak.Span.Start;
+        while (start > 0 && source[start - 1] == ' ')
+            start--;
+        if (start > 0 && source[start - 1] == '\\')
+            start--;
 
-            var end = lineBreak.Span.End + 1;
-            if (end <= source.Length && end > start && source[end - 1] == '\r' && end < source.Length && source[end] == '\n')
-                end++;
+        var end = lineBreak.Span.End + 1;
+        if (end <= source.Length && end > start && source[end - 1] == '\r' && end < source.Length && source[end] == '\n')
+            end++;
 
-            var raw = SafeSlice(source, start, end);
-            markers[id] = new(id, MarkerKind.Protected, raw, string.Empty);
-            trace.State("marker", () => markers[id]);
-            sb.Add(new(true, id, string.Empty, false));
-            sb.Add(new(true, id, string.Empty, true));
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var raw = SafeSlice(source, start, end);
+        markers[id] = new(id, MarkerKind.Protected, raw, string.Empty);
+        sb.Add(new(true, id, string.Empty, false));
+        sb.Add(new(true, id, string.Empty, true));
     }
 
     /// <summary>
     /// Appends literal text as typed data without interpreting preservation syntax.
     /// </summary>
     /// <param name="literal">Literal inline node to encode.</param>
-    /// <param name="source">Original Markdown source.</param>
-    /// <param name="allocator">Allocator for collision-free marker IDs.</param>
-    /// <param name="markers">Marker definitions indexed by ID.</param>
     /// <param name="sb">Output buffer for encoded text.</param>
     /// <returns>No return value.</returns>
-    private static void EncodeLiteral(LiteralInline literal, string source, MarkerAllocationContext allocator, Dictionary<int, MarkerDefinition> markers, List<MarkerToken> sb)
+    private static void EncodeLiteral(LiteralInline literal, List<MarkerToken> sb)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "EncodeLiteral", () => new { literal });
-        try
-        {
-            var value = literal.Content.ToString();
-            if (sb.Count > 0 && !sb[^1].IsMarker)
-                sb[^1] = sb[^1] with { Value = sb[^1].Value + value };
-            else
-                sb.Add(new(false, 0, value, false));
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var value = literal.Content.ToString();
+        if (sb.Count > 0 && !sb[^1].IsMarker)
+            sb[^1] = sb[^1] with { Value = sb[^1].Value + value };
+        else
+            sb.Add(new(false, 0, value, false));
     }
 
     /// <summary>
@@ -426,21 +323,11 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>No return value.</returns>
     private static void AddProtected(Inline inline, string source, MarkerAllocationContext allocator, Dictionary<int, MarkerDefinition> markers, List<MarkerToken> sb)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "AddProtected", () => new { inline });
-        try
-        {
-            var id = allocator.AllocateId();
-            var raw = SafeSlice(source, inline.Span.Start, inline.Span.End + 1);
-            markers[id] = new(id, MarkerKind.Protected, raw, string.Empty);
-            trace.State("marker", () => markers[id]);
-            sb.Add(new(true, id, string.Empty, false));
-            sb.Add(new(true, id, string.Empty, true));
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var id = allocator.AllocateId();
+        var raw = SafeSlice(source, inline.Span.Start, inline.Span.End + 1);
+        markers[id] = new(id, MarkerKind.Protected, raw, string.Empty);
+        sb.Add(new(true, id, string.Empty, false));
+        sb.Add(new(true, id, string.Empty, true));
     }
 
     /// <summary>
@@ -454,33 +341,23 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>No return value.</returns>
     private static void AddFormatting(ContainerInline inline, string source, MarkerAllocationContext allocator, Dictionary<int, MarkerDefinition> markers, List<MarkerToken> sb)
     {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "AddFormatting", () => new { inline });
-        try
+        var children = inline.ToList();
+        if (children.Count == 0)
         {
-            var children = inline.ToList();
-            if (children.Count == 0)
-            {
-                AddProtected(inline, source, allocator, markers, sb);
-                return;
-            }
+            AddProtected(inline, source, allocator, markers, sb);
+            return;
+        }
 
-            var id = allocator.AllocateId();
-            var first = children.Min(x => x.Span.Start);
-            var last = children.Max(x => x.Span.End) + 1;
-            var open = SafeSlice(source, inline.Span.Start, first);
-            var close = SafeSlice(source, last, inline.Span.End + 1);
-            markers[id] = new(id, MarkerKind.Formatting, open, close) { IsEmphasis = inline is EmphasisInline };
-            trace.State("marker", () => markers[id]);
-            sb.Add(new(true, id, string.Empty, false));
-            foreach (var child in children)
-                EncodeInline(child, source, allocator, markers, sb);
-            sb.Add(new(true, id, string.Empty, true));
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var id = allocator.AllocateId();
+        var first = children.Min(x => x.Span.Start);
+        var last = children.Max(x => x.Span.End) + 1;
+        var open = SafeSlice(source, inline.Span.Start, first);
+        var close = SafeSlice(source, last, inline.Span.End + 1);
+        markers[id] = new(id, MarkerKind.Formatting, open, close) { IsEmphasis = inline is EmphasisInline };
+        sb.Add(new(true, id, string.Empty, false));
+        foreach (var child in children)
+            EncodeInline(child, source, allocator, markers, sb);
+        sb.Add(new(true, id, string.Empty, true));
     }
 
     /// <summary>
@@ -490,18 +367,6 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <param name="start">Inclusive start character offset.</param>
     /// <param name="end">Exclusive end character offset.</param>
     /// <returns>Requested source slice, or empty string for invalid bounds.</returns>
-    private static string SafeSlice(string source, int start, int end)
-    {
-        using var trace = DebugTrace.Enter("MarkdownExtractor", "SafeSlice", () => new { source, start, end });
-        try
-        {
-            return trace.Return<string>(start >= 0 && end >= start && end <= source.Length ? source[start..end] : string.Empty);
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
-    }
-
+    private static string SafeSlice(string source, int start, int end) =>
+        start >= 0 && end >= start && end <= source.Length ? source[start..end] : string.Empty;
 }

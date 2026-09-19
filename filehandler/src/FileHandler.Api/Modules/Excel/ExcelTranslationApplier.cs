@@ -4,7 +4,6 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Office;
 using S = DocumentFormat.OpenXml.Spreadsheet;
 using A = DocumentFormat.OpenXml.Drawing;
@@ -29,55 +28,32 @@ public sealed class ExcelTranslationApplier
         IReadOnlyList<OfficeDecodedUnit> decodedUnits,
         CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("ExcelTranslationApplier", "Prepare", () => new
-        {
-            unitCount = plan.Units.Count,
-            decodedCount = decodedUnits.Count
-        });
+        var touchedParts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        try
+        for (var i = 0; i < plan.Units.Count; i++)
         {
-            trace.State("stage", () => "resolveBindings");
-            var touchedParts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            cancellationToken.ThrowIfCancellationRequested();
+            var unit = plan.Units[i];
+            var decoded = decodedUnits[i];
 
-            for (var i = 0; i < plan.Units.Count; i++)
+            if (OfficeTextBindings.Changed(unit, decoded))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var unit = plan.Units[i];
-                var decoded = decodedUnits[i];
-
-                using var unitItem = DebugTrace.Unit(i, "prepare");
-
-                if (OfficeTextBindings.Changed(unit, decoded))
-                {
-                    touchedParts.Add(unit.Location.PartUri);
-                    foreach (var binding in unit.Bindings) touchedParts.Add(binding.TargetPartUri);
-                }
+                touchedParts.Add(unit.Location.PartUri);
+                foreach (var binding in unit.Bindings) touchedParts.Add(binding.TargetPartUri);
             }
+        }
 
-            trace.State("stage", () => "buildEditMask");
-            var masks = new Dictionary<string, OfficeEditMask>(StringComparer.OrdinalIgnoreCase);
-            var editsByPart = OfficeTextBindings.EditsByPart(plan.Units, decodedUnits);
-            var unitParts = plan.Units.Select(u => u.Location.PartUri).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            foreach (var partUri in touchedParts)
-            {
-                masks[partUri] = new OfficeEditMask(partUri, new[] { "//x:t", "//x:v", "//x:si", "//a:t" }, SstOptionalCountersRemoved: true);
-                if (unitParts.Contains(partUri))
-                    masks[partUri] = masks[partUri] with { ScalarEdits = editsByPart[partUri] };
-            }
+        var masks = new Dictionary<string, OfficeEditMask>(StringComparer.OrdinalIgnoreCase);
+        var editsByPart = OfficeTextBindings.EditsByPart(plan.Units, decodedUnits);
+        var unitParts = plan.Units.Select(u => u.Location.PartUri).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var partUri in touchedParts)
+        {
+            masks[partUri] = new OfficeEditMask(partUri, new[] { "//x:t", "//x:v", "//x:si", "//a:t" }, SstOptionalCountersRemoved: true);
+            if (unitParts.Contains(partUri))
+                masks[partUri] = masks[partUri] with { ScalarEdits = editsByPart[partUri] };
+        }
 
-            trace.Return(new { outcome = "success", touchedPartsCount = touchedParts.Count });
-            return new ExcelPreparedPatch(plan, decodedUnits, masks);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+        return new ExcelPreparedPatch(plan, decodedUnits, masks);
     }
 
     /// <summary>
@@ -94,122 +70,101 @@ public sealed class ExcelTranslationApplier
         ExcelPreparedPatch patch,
         CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("ExcelTranslationApplier", "Apply", () => new
+        var workbookPart = doc.WorkbookPart;
+        if (workbookPart is null)
+            return;
+
+        var sstPart = workbookPart.SharedStringTablePart;
+        var sst = sstPart?.SharedStringTable;
+        ExcelSharedStringWriter? sstWriter = sst is not null ? new ExcelSharedStringWriter(sst) : null;
+        var sstModified = false;
+
+        var worksheetPartsByUri = workbookPart.WorksheetParts.ToDictionary(
+            wp => "/" + wp.Uri.ToString().TrimStart('/'),
+            StringComparer.OrdinalIgnoreCase);
+
+        var cellsByPart = worksheetPartsByUri.Where(p => patch.EditMasks.ContainsKey(p.Key)).ToDictionary(p => p.Key,
+            p => p.Value.Worksheet!.Descendants<Cell>().ToDictionary(c => c.CellReference?.Value ?? throw new InvalidDataException("Implicit cell address is unsupported in selected worksheet."), StringComparer.Ordinal),
+            StringComparer.OrdinalIgnoreCase);
+        var drawingParts = workbookPart.WorksheetParts.Select(w => w.DrawingsPart).OfType<DrawingsPart>()
+            .Distinct().ToDictionary(p => "/" + p.Uri.ToString().TrimStart('/'), StringComparer.OrdinalIgnoreCase);
+        var originalItems = sst?.Elements<SharedStringItem>().ToArray();
+        var expectedAppends = new SortedDictionary<int, string>();
+        var touchedParts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        for (var i = 0; i < patch.Plan.Units.Count; i++)
         {
-            patchUnits = patch.DecodedUnits.Count
-        });
+            cancellationToken.ThrowIfCancellationRequested();
+            var unit = patch.Plan.Units[i];
+            var decoded = patch.DecodedUnits[i];
 
-        try
-        {
-            trace.State("stage", () => "applyUnits");
-
-            var workbookPart = doc.WorkbookPart;
-            if (workbookPart is null)
-                return;
-
-            var sstPart = workbookPart.SharedStringTablePart;
-            var sst = sstPart?.SharedStringTable;
-            ExcelSharedStringWriter? sstWriter = sst is not null ? new ExcelSharedStringWriter(sst) : null;
-            var sstModified = false;
-
-            var worksheetPartsByUri = workbookPart.WorksheetParts.ToDictionary(
-                wp => "/" + wp.Uri.ToString().TrimStart('/'),
-                StringComparer.OrdinalIgnoreCase);
-
-            var cellsByPart = worksheetPartsByUri.Where(p => patch.EditMasks.ContainsKey(p.Key)).ToDictionary(p => p.Key,
-                p => p.Value.Worksheet!.Descendants<Cell>().ToDictionary(c => c.CellReference?.Value ?? throw new InvalidDataException("Implicit cell address is unsupported in selected worksheet."), StringComparer.Ordinal),
-                StringComparer.OrdinalIgnoreCase);
-            var drawingParts = workbookPart.WorksheetParts.Select(w => w.DrawingsPart).OfType<DrawingsPart>()
-                .Distinct().ToDictionary(p => "/" + p.Uri.ToString().TrimStart('/'), StringComparer.OrdinalIgnoreCase);
-            var originalItems = sst?.Elements<SharedStringItem>().ToArray();
-            var expectedAppends = new SortedDictionary<int, string>();
-            var touchedParts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            for (var i = 0; i < patch.Plan.Units.Count; i++)
+            if (!OfficeTextBindings.Changed(unit, decoded))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var unit = patch.Plan.Units[i];
-                var decoded = patch.DecodedUnits[i];
+                continue;
+            }
 
-                using var unitItem = DebugTrace.Unit(i, "apply");
-                unitItem.State("changed", () => OfficeTextBindings.Changed(unit, decoded));
+            if (drawingParts.TryGetValue(unit.Location.PartUri, out var drawing))
+            {
+                OfficeTextBindings.Apply(drawing.WorksheetDrawing!, unit, decoded);
+                touchedParts.Add(unit.Location.PartUri);
+                continue;
+            }
 
-                if (!OfficeTextBindings.Changed(unit, decoded)) continue;
-                if (drawingParts.TryGetValue(unit.Location.PartUri, out var drawing))
-                {
-                    OfficeTextBindings.Apply(drawing.WorksheetDrawing!, unit, decoded);
-                    touchedParts.Add(unit.Location.PartUri);
+            if (worksheetPartsByUri.TryGetValue(unit.Location.PartUri, out var wsPart))
+            {
+                var worksheet = wsPart.Worksheet;
+                if (worksheet is null)
                     continue;
-                }
 
-                if (worksheetPartsByUri.TryGetValue(unit.Location.PartUri, out var wsPart))
+                var cellRef = unit.Location.CellReference;
+                if (string.IsNullOrEmpty(cellRef))
+                    continue;
+
+                cellsByPart[unit.Location.PartUri].TryGetValue(cellRef, out var cell);
+                if (cell is null)
+                    continue;
+
+                if (cell.DataType?.Value == CellValues.SharedString && sstWriter is not null && sst is not null)
                 {
-                    var worksheet = wsPart.Worksheet;
-                    if (worksheet is null)
-                        continue;
-
-                    var cellRef = unit.Location.CellReference;
-                    if (string.IsNullOrEmpty(cellRef))
-                        continue;
-
-                    cellsByPart[unit.Location.PartUri].TryGetValue(cellRef, out var cell);
-                    if (cell is null)
-                        continue;
-
-                    if (cell.DataType?.Value == CellValues.SharedString && sstWriter is not null && sst is not null)
-                    {
-                        var original = originalItems![int.Parse(cell.CellValue!.Text)];
-                        var clone = (SharedStringItem)original.CloneNode(true);
-                        OfficeTextBindings.ApplyClone(original, clone, unit, decoded);
-                        var newIndex = sstWriter.ResolveOrAppend(sst, clone);
-                        if (newIndex >= originalItems!.Length) expectedAppends[newIndex] = clone.OuterXml;
-                        var mask = patch.EditMasks[unit.Location.PartUri];
-                        var edits = (Dictionary<string, OfficeScalarEdit>)mask.ScalarEdits!;
-                        edits.Add(OfficeTextBindings.Key(OfficeTextBindings.Path(cell.CellValue!)), new(
-                            Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(cell.CellValue!.Text))), newIndex.ToString()));
-                        cell.CellValue = new CellValue(newIndex.ToString());
-                        unitItem.State("sharedString", () => new { cellRef, newIndex, xml = clone.OuterXml });
-                        sstModified = true;
-                        touchedParts.Add(unit.Location.PartUri);
-                    }
-                    else if (cell.DataType?.Value == CellValues.InlineString && cell.InlineString is not null)
-                    {
-                        OfficeTextBindings.Apply(worksheet, unit, decoded);
-                        touchedParts.Add(unit.Location.PartUri);
-                    }
+                    var original = originalItems![int.Parse(cell.CellValue!.Text)];
+                    var clone = (SharedStringItem)original.CloneNode(true);
+                    OfficeTextBindings.ApplyClone(original, clone, unit, decoded);
+                    var newIndex = sstWriter.ResolveOrAppend(sst, clone);
+                    if (newIndex >= originalItems!.Length) expectedAppends[newIndex] = clone.OuterXml;
+                    var mask = patch.EditMasks[unit.Location.PartUri];
+                    var edits = (Dictionary<string, OfficeScalarEdit>)mask.ScalarEdits!;
+                    edits.Add(OfficeTextBindings.Key(OfficeTextBindings.Path(cell.CellValue!)), new(
+                        Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(cell.CellValue!.Text))), newIndex.ToString()));
+                    cell.CellValue = new CellValue(newIndex.ToString());
+                    sstModified = true;
+                    touchedParts.Add(unit.Location.PartUri);
+                }
+                else if (cell.DataType?.Value == CellValues.InlineString && cell.InlineString is not null)
+                {
+                    OfficeTextBindings.Apply(worksheet, unit, decoded);
+                    touchedParts.Add(unit.Location.PartUri);
                 }
             }
-
-            if (sstModified && sst is not null && sstPart is not null)
-            {
-                ExcelSharedStringWriter.CleanOptionalCounters(sst);
-                var sstUri = "/" + sstPart.Uri.ToString().TrimStart('/');
-                patch.EditMasks[sstUri] = patch.EditMasks[sstUri] with { AppendedXml = expectedAppends.Values.ToArray() };
-                session.WritePart(sstUri, sst);
-            }
-
-            foreach (var partUri in touchedParts)
-            {
-                if (drawingParts.TryGetValue(partUri, out var drawing))
-                {
-                    session.WritePart(partUri, drawing.WorksheetDrawing!);
-                }
-                if (worksheetPartsByUri.TryGetValue(partUri, out var wsPart) && wsPart.Worksheet is not null)
-                {
-                    session.WritePart(partUri, wsPart.Worksheet);
-                }
-            }
-
-            trace.Return(new { outcome = "success", serializedPartsCount = touchedParts.Count + (sstModified ? 1 : 0) });
         }
-        catch (OperationCanceledException)
+
+        if (sstModified && sst is not null && sstPart is not null)
         {
-            throw;
+            ExcelSharedStringWriter.CleanOptionalCounters(sst);
+            var sstUri = "/" + sstPart.Uri.ToString().TrimStart('/');
+            patch.EditMasks[sstUri] = patch.EditMasks[sstUri] with { AppendedXml = expectedAppends.Values.ToArray() };
+            session.WritePart(sstUri, sst);
         }
-        catch (Exception ex)
+
+        foreach (var partUri in touchedParts)
         {
-            trace.Error(ex);
-            throw;
+            if (drawingParts.TryGetValue(partUri, out var drawing))
+            {
+                session.WritePart(partUri, drawing.WorksheetDrawing!);
+            }
+            if (worksheetPartsByUri.TryGetValue(partUri, out var wsPart) && wsPart.Worksheet is not null)
+            {
+                session.WritePart(partUri, wsPart.Worksheet);
+            }
         }
     }
 }

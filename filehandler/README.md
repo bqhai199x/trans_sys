@@ -1,6 +1,6 @@
 # FileHandler
 
-REST API ASP.NET Core 10 xử lý Markdown (`.md`), văn bản thuần (`.txt`) và Office Open XML (`.docx`, `.xlsx`, `.pptx`) theo luồng stateless: `POST /import` trả array chuỗi cần dịch; `POST /export` nhận lại đúng file nguồn và `translatedTexts` là JSON array nằm trong một field multipart, rồi trả file có cùng tên gốc (basename), giữ nguyên extension và chữ hoa/thường, không thêm `.translated`.
+REST API ASP.NET Core 10 xử lý Markdown (`.md`), văn bản thuần (`.txt`) và Office Open XML (`.docx`, `.xlsx`, `.pptx`) theo luồng stateless: `POST /api/{format}/import` trả array chuỗi cần dịch; `POST /api/{format}/export` nhận lại đúng file nguồn và `texts` là JSON array nằm trong một field multipart, rồi trả file có cùng tên gốc (basename), giữ nguyên extension và chữ hoa/thường, không thêm `.translated`.
 
 ## Chạy và kiểm thử
 
@@ -13,74 +13,10 @@ dotnet run --project src/FileHandler.Api
 ```
 
 Swagger UI ở `/swagger`; OpenAPI JSON ở `/swagger/v1/swagger.json`.
-Trang quản lý và xem debug trace trực quan ở `/debug` (hoặc `/debug.html`).
-
-## Debug trace
-
-Bật `DebugTrace.Enabled` trong `src/FileHandler.Api/appsettings.json`, hoặc dùng biến môi trường khi chạy:
-
-```powershell
-$env:DebugTrace__Enabled = "true"
-dotnet run --project src/FileHandler.Api
-```
-
-Có thể bật/tắt realtime ngay trên trang `/debug` hoặc qua API `POST /debug/toggle`.
-
-Nhập **Index câu (từ 0)** trên `/debug`, ví dụ `0, 3, 12`, rồi bấm **Lưu index** trước khi gửi lại import/export. Index là vị trí trong array JSON do import trả về, trùng `errors[].index`; không phải số token, slide, sheet hay dòng. Lựa chọn áp dụng cho mọi request tiếp theo trong tiến trình hiện tại, mất khi restart. `DebugTrace.UnitIndexes` trong cấu hình cung cấp giá trị mặc định (mặc định `[]`). Request đang chạy giữ bản chụp cấu hình lúc bắt đầu.
-
-`GET /debug/settings` trả `{ "unitIndexes": [...] }`; `PUT /debug/settings` nhận cùng cấu trúc, loại trùng và sắp xếp index. Số âm hoặc danh sách null bị từ chối. Danh sách rỗng chỉ ghi metadata, stage và kết quả request. Index không có hoặc chưa được xử lý xuất hiện trong `missingUnitIndexes`; không tự bật ghi toàn bộ tài liệu.
-
-Mỗi HTTP request tạo một file JSON có cấu trúc cây lồng nhau theo luồng gọi hàm trong `logs/debug/`, tính từ content root của API. Tên file gồm giờ UTC và ID ngẫu nhiên.
-
-Các file log được lưu trong thư mục `logs/debug/` và có thể xem trực quan trên trang `/debug`.
-
-Giao diện `/debug` hỗ trợ:
-- Bật/tắt Debug Mode tức thì (không cần restart app).
-- Xem danh sách trace log với status code, method, path, thời gian chạy.
-- Tìm kiếm theo text đã extract hoặc nội dung bất kỳ trong trace.
-- Lọc theo function/method đã gọi.
-- Xem cây gọi hàm chi tiết (tree view) có thể expand/collapse:
-  - `In`: tham số đầu vào (màu xanh dương).
-  - `Out`: giá trị trả về (màu xanh lá).
-  - `State`: snapshot biến và dữ liệu trung gian (màu vàng/hổ phách).
-  - `Item`: vòng lặp xử lý dữ liệu (màu tím).
-  - `Error`: lỗi hoặc ngoại lệ nếu có (màu đỏ).
-  - `Time`: thời gian chạy từng method (ms).
-- Copy / Download JSON trace.
-- Xóa từng log hoặc xóa toàn bộ log.
-
-Tracing bao phủ các method hiện có của controller, service, reader, extractor, marker codec, translation applier, line map và file type detector. Không instrument constructor, property, lambda, nội bộ .NET/Markdig hay chính hệ thống tracing. Khi thêm method mới, dùng mẫu dưới đây; không tự động instrument method mới bằng attribute.
-
-```csharp
-using var trace = DebugTrace.Enter("MyService", "Process", () => new { input });
-try
-{
-    var result = ProcessCore(input);
-    trace.State("unitCount", () => result.Count);
-    return trace.Return(result);
-}
-catch (Exception error)
-{
-    trace.Error(error);
-    throw;
-}
-```
-
-Đặt `State` ở nơi giá trị vừa thay đổi hoặc quyết định xử lý vừa được xác định; dùng tên camelCase có nghĩa. `stage` được ghi **trước** mỗi bước service: lỗi hoặc cancellation giữ lại bước cuối, không có nghĩa bước đó đã thành công. Trace mới không capture `In`/`Out` tổng quát vì các giá trị này có thể chứa cả tài liệu hoặc toàn bộ bản dịch. Ghi dữ liệu riêng của câu bằng snapshot tường minh trong scope `DebugTrace.Unit(index, phase)`.
-
-- `unitIndex` luôn bắt đầu từ 0 và chỉ đơn vị dịch thực tế. Block chỉ có code hoặc không có text cần dịch không chiếm index. Scope vòng lặp slide/sheet độc lập với scope đơn vị dịch.
-- Office ghi text span, XML thuộc tính run, fingerprint, quyết định gộp/tách, token/anchor, binding, đầu vào dịch, kết quả decode, lỗi và scalar được thay thế. Anchor dùng metadata/hash để không chụp nhầm text box có index khác. Excel ghi XML rich text của ô kể cả khi tái sử dụng template shared string.
-- Markdown ghi buffer, marker, token, bản dịch và vùng thay thế của câu được chọn; không ghi toàn bộ AST, source hay buffer đầu ra tài liệu. TXT ghi source span/line, bản dịch và quyết định giữ nguyên/thay thế.
-
-Mọi phép dựng snapshot phải nằm trong lambda `State(..., () => ...)` để không chạy khi tracing tắt, ẩn nội dung hoặc index không được chọn. Snapshot trong scope unit chỉ được chứa dữ liệu của unit đó, không truyền stream, AST hoặc cây OpenXML vào serializer.
-
-`CaptureContent: true` ghi đầy đủ nội dung câu được chọn; đặt `false` để ẩn snapshot bằng `[Hidden]` và thông báo lỗi bằng `[Redacted]`. Trace theo index không áp dụng cắt chuỗi/collection hoặc các trần `MaxValueLength`, `MaxEvents`, `MaxTraceBytes` của trace cũ. Những cấu hình này chỉ còn dùng cho session nội bộ kiểu cũ. Lọc index diễn ra trước khi dựng snapshot, không ghi full rồi mới lọc file.
-
-Middleware serialize và flush bất đồng bộ khi kết thúc request. Log mới có `version: 2`, `unitIndexes`, `missingUnitIndexes` và `unitIndex` trên các node liên quan; viewer vẫn đọc log cũ. Tắt `Enabled` để ngừng tạo file cho request mới. Lỗi ghi trace không làm thay đổi kết quả API. Thư mục `logs/` được Git bỏ qua; file cũ chưa tự động xóa, có thể xóa qua `/debug`.
 
 ```bash
-curl -F "file=@guide.md" http://localhost:5000/import
-curl -OJ -F "file=@guide.md" -F 'translatedTexts=["Bắt đầu nhanh"]' http://localhost:5000/export
+curl -F "file=@guide.md" http://localhost:5000/api/markdown/import
+curl -OJ -F "file=@guide.md" -F 'texts=["Bắt đầu nhanh"]' http://localhost:5000/api/markdown/export
 ```
 
 Thành công import trả array JSON thuần. Thành công export trả `text/markdown; charset=utf-8` cho `.md`, `text/plain; charset=utf-8` cho `.txt`, hoặc MIME tương ứng cho Office (`.docx`, `.xlsx`, `.pptx`) với attachment. Chọn handler bằng extension cuối, không phân biệt hoa thường, không dựa vào MIME client gửi. Mọi lỗi trả array gồm `code`, `message` và các field định vị nếu có. HTTP 400 dùng cho multipart/JSON sai; 413 cho giới hạn tài nguyên; 415 cho extension ngoài `.md`/`.txt`/`.docx`/`.xlsx`/`.pptx` hoặc Content-Type request không được hỗ trợ; 422 cho UTF-8, count, nội dung bản dịch, marker/token hoặc mapping sai; 500 cho lỗi ngoài dự kiến. Reverse proxy có thể chặn request trước ứng dụng nên response của proxy không được ứng dụng chuẩn hóa.
@@ -135,9 +71,9 @@ Import trả:
 Gửi lại file nguồn cùng bản dịch theo đúng thứ tự, bằng field JSON hoặc upload file JSON:
 
 ```bash
-curl -F "file=@guide.txt" http://localhost:5000/import
-curl -OJ -F "file=@guide.txt" -F 'translatedTexts=["Xin chào.\r\nDòng thứ hai.","# Văn bản thuần."]' http://localhost:5000/export
-curl -OJ -F "file=@guide.txt" -F "translatedTexts=@translations.json;type=application/json" http://localhost:5000/export
+curl -F "file=@guide.txt" http://localhost:5000/api/plaintext/import
+curl -OJ -F "file=@guide.txt" -F 'texts=["Xin chào.\r\nDòng thứ hai.","# Văn bản thuần."]' http://localhost:5000/api/plaintext/export
+curl -OJ -F "file=@guide.txt" -F "texts=@translations.json;type=application/json" http://localhost:5000/api/plaintext/export
 ```
 
 Output là `guide.txt`:

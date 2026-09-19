@@ -3,7 +3,7 @@ using FileHandler.Api.Common;
 namespace FileHandler.Api.Modules.Office;
 
 /// <summary>
-/// Seekable stream wrapper enforcing high-water byte limit during serialization.
+/// Seekable stream wrapper enforcing output byte limit during serialization.
 /// </summary>
 public sealed class OfficeBoundedStream : Stream
 {
@@ -14,25 +14,15 @@ public sealed class OfficeBoundedStream : Stream
     private readonly Stream _inner;
 
     /// <summary>
-    /// Maximum allowed high-water length in bytes.
+    /// Maximum allowed stream length in bytes.
     /// </summary>
     private readonly long _maxBytes;
-
-    /// <summary>
-    /// Highest observed stream length during lifetime.
-    /// </summary>
-    private long _highWaterLength;
-
-    /// <summary>
-    /// Gets highest byte length observed during streaming.
-    /// </summary>
-    public long HighWaterLength => _highWaterLength;
 
     /// <summary>
     /// Creates bounded stream wrapper.
     /// </summary>
     /// <param name="inner">Seekable underlying stream.</param>
-    /// <param name="maxBytes">Maximum allowable high-water length.</param>
+    /// <param name="maxBytes">Maximum allowable stream length in bytes.</param>
     /// <exception cref="ArgumentNullException">Inner stream is null.</exception>
     /// <exception cref="ArgumentException">Inner stream is not seekable.</exception>
     /// <exception cref="ArgumentOutOfRangeException">Max bytes is negative.</exception>
@@ -44,8 +34,7 @@ public sealed class OfficeBoundedStream : Stream
         if (maxBytes < 0)
             throw new ArgumentOutOfRangeException(nameof(maxBytes), "Maximum bytes limit must be non-negative.");
         _maxBytes = maxBytes;
-        _highWaterLength = inner.Length;
-        if (_highWaterLength > _maxBytes)
+        if (inner.Length > _maxBytes)
             throw new FileLimitException("output_too_large");
     }
 
@@ -80,8 +69,6 @@ public sealed class OfficeBoundedStream : Stream
             if (value > _maxBytes)
                 throw new FileLimitException("output_too_large");
             _inner.Position = value;
-            if (value > _highWaterLength)
-                _highWaterLength = value;
         }
     }
 
@@ -144,10 +131,7 @@ public sealed class OfficeBoundedStream : Stream
         };
         if (target > _maxBytes)
             throw new FileLimitException("output_too_large");
-        var result = _inner.Seek(offset, origin);
-        if (result > _highWaterLength)
-            _highWaterLength = result;
-        return result;
+        return _inner.Seek(offset, origin);
     }
 
     /// <summary>
@@ -160,8 +144,6 @@ public sealed class OfficeBoundedStream : Stream
         if (value > _maxBytes)
             throw new FileLimitException("output_too_large");
         _inner.SetLength(value);
-        if (value > _highWaterLength)
-            _highWaterLength = value;
     }
 
     /// <summary>
@@ -177,8 +159,6 @@ public sealed class OfficeBoundedStream : Stream
         if (target > _maxBytes)
             throw new FileLimitException("output_too_large");
         _inner.Write(buffer, offset, count);
-        if (target > _highWaterLength)
-            _highWaterLength = target;
     }
 
     /// <summary>
@@ -192,8 +172,6 @@ public sealed class OfficeBoundedStream : Stream
         if (target > _maxBytes)
             throw new FileLimitException("output_too_large");
         _inner.Write(buffer);
-        if (target > _highWaterLength)
-            _highWaterLength = target;
     }
 
     /// <summary>
@@ -210,8 +188,6 @@ public sealed class OfficeBoundedStream : Stream
         if (target > _maxBytes)
             throw new FileLimitException("output_too_large");
         await _inner.WriteAsync(buffer.AsMemory(offset, count), cancellationToken).ConfigureAwait(false);
-        if (target > _highWaterLength)
-            _highWaterLength = target;
     }
 
     /// <summary>
@@ -226,8 +202,6 @@ public sealed class OfficeBoundedStream : Stream
         if (target > _maxBytes)
             throw new FileLimitException("output_too_large");
         await _inner.WriteAsync(buffer, cancellationToken).ConfigureAwait(false);
-        if (target > _highWaterLength)
-            _highWaterLength = target;
     }
 
     /// <summary>

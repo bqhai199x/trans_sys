@@ -1,5 +1,4 @@
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using Microsoft.Extensions.Options;
 
 namespace FileHandler.Api.Modules.Markdown;
@@ -52,69 +51,42 @@ public sealed class MarkdownService : IFileHandler
     /// <returns>Task containing extracted texts and validation errors.</returns>
     public async Task<ImportResult> ImportAsync(Stream source, CancellationToken cancellationToken = default)
     {
-        using var trace = DebugTrace.Enter("MarkdownService", "ImportAsync", () => new { source, cancellationToken });
-        try
-        {
-            trace.State("stage", () => "readSource");
-            var (document, error) = await MarkdownSourceReader.ReadAsync(source, _options.MaxFileBytes, cancellationToken);
-            if (error is not null)
-                return trace.Return<ImportResult>(new([], [error]));
-            trace.State("stage", () => "extractUnits");
-            var extraction = _extractor.Extract(document!, _options.MaxUnits, cancellationToken);
-            return trace.Return<ImportResult>(extraction.Errors.Count > 0 ? new([], extraction.Errors) : new(extraction.Units.Select(x => x.Text).ToArray(), []));
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var (document, error) = await MarkdownSourceReader.ReadAsync(source, _options.MaxFileBytes, cancellationToken);
+        if (error is not null)
+            return new([], [error]);
+        var extraction = _extractor.Extract(document!, _options.MaxUnits, cancellationToken);
+        return extraction.Errors.Count > 0 ? new([], extraction.Errors) : new(extraction.Units.Select(x => x.Text).ToArray(), []);
     }
 
     /// <summary>
     /// Applies translations to source stream and returns exported file.
     /// </summary>
     /// <param name="source">Readable source stream.</param>
-    /// <param name="translatedTexts">Translated units in source order.</param>
+    /// <param name="translations">Translated units in source order.</param>
     /// <param name="cancellationToken">Token for cancelling this operation.</param>
     /// <returns>Task containing exported bytes, media type, and validation errors.</returns>
-    public async Task<ExportResult> ExportAsync(Stream source, IReadOnlyList<string> translatedTexts, CancellationToken cancellationToken = default)
+    public async Task<ExportResult> ExportAsync(Stream source, IReadOnlyList<string> translations, CancellationToken cancellationToken = default)
     {
-        using var trace = DebugTrace.Enter("MarkdownService", "ExportAsync", () => new { source, translatedTexts, cancellationToken });
-        try
+        var (document, error) = await MarkdownSourceReader.ReadAsync(source, _options.MaxFileBytes, cancellationToken);
+        if (error is not null)
+            return new(null, ContentType, [error]);
+        var extraction = _extractor.Extract(document!, _options.MaxUnits, cancellationToken);
+        var (text, errors) = MarkdownTranslationApplier.Apply(extraction, translations, _options, cancellationToken);
+        if (errors.Count > 0)
+            return new(null, ContentType, errors);
+        var structureErrors = _extractor.ValidateStructure(document!.Text, text!);
+        if (structureErrors.Count > 0)
         {
-            trace.State("stage", () => "readSource");
-            var (document, error) = await MarkdownSourceReader.ReadAsync(source, _options.MaxFileBytes, cancellationToken);
-            if (error is not null)
-                return trace.Return<ExportResult>(new(null, ContentType, [error]));
-            trace.State("stage", () => "extractUnits");
-            var extraction = _extractor.Extract(document!, _options.MaxUnits, cancellationToken);
-            trace.State("stage", () => "applyTranslations");
-            var (text, errors) = MarkdownTranslationApplier.Apply(extraction, translatedTexts, _options, cancellationToken);
-            if (errors.Count > 0)
-                return trace.Return<ExportResult>(new(null, ContentType, errors));
-            trace.State("stage", () => "validateStructure");
-            var structureErrors = _extractor.ValidateStructure(document!.Text, text!);
-            if (structureErrors.Count > 0)
-            {
-                var baseline = MarkdownTranslationApplier.Apply(extraction, translatedTexts, _options, cancellationToken, validationBaseline: true);
-                if (baseline.Errors.Count > 0)
-                    return trace.Return<ExportResult>(new(null, ContentType, baseline.Errors));
-                structureErrors = _extractor.ValidateStructure(baseline.Text!, text!);
-            }
-            if (structureErrors.Count > 0)
-                return trace.Return<ExportResult>(new(null, ContentType, structureErrors));
-            trace.State("stage", () => "encodeOutput");
-            var bytes = MarkdownSourceReader.Encode(text!, document!.HasBom);
-            trace.State("outputBytes", () => bytes.LongLength);
-            trace.State("maxOutputBytes", () => _options.MaxOutputBytes);
-            if (bytes.LongLength > _options.MaxOutputBytes)
-                return trace.Return<ExportResult>(new(null, ContentType, [new("output_too_large", $"Kết quả vượt giới hạn {_options.MaxOutputBytes} byte.")]));
-            return trace.Return<ExportResult>(new(bytes, ContentType, []));
+            var baseline = MarkdownTranslationApplier.Apply(extraction, translations, _options, cancellationToken, validationBaseline: true);
+            if (baseline.Errors.Count > 0)
+                return new(null, ContentType, baseline.Errors);
+            structureErrors = _extractor.ValidateStructure(baseline.Text!, text!);
         }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        if (structureErrors.Count > 0)
+            return new(null, ContentType, structureErrors);
+        var bytes = MarkdownSourceReader.Encode(text!, document!.HasBom);
+        if (bytes.LongLength > _options.MaxOutputBytes)
+            return new(null, ContentType, [new("output_too_large", $"Kết quả vượt giới hạn {_options.MaxOutputBytes} byte.")]);
+        return new(bytes, ContentType, []);
     }
 }

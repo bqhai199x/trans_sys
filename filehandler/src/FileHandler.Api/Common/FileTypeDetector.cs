@@ -1,5 +1,3 @@
-using FileHandler.Api.Diagnostics;
-
 namespace FileHandler.Api.Common;
 
 /// <summary>
@@ -16,36 +14,24 @@ public static class FileTypeDetector
     /// <returns>True for supported source extension; otherwise false.</returns>
     public static bool TryDetect(string? clientFileName, out FileType fileType)
     {
-        using var trace = DebugTrace.Enter("FileTypeDetector", "TryDetect", () => new { clientFileName });
-        try
-        {
-            fileType = default;
-            if (string.IsNullOrWhiteSpace(clientFileName))
-                return trace.Return<bool>(false);
-            var safeName = GetFileName(clientFileName);
-            var extension = Path.GetExtension(safeName);
-            trace.State("extension", () => extension);
-            if (string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase))
-                fileType = FileType.Markdown;
-            else if (string.Equals(extension, ".txt", StringComparison.OrdinalIgnoreCase))
-                fileType = FileType.PlainText;
-            else if (string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase))
-                fileType = FileType.Word;
-            else if (string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase))
-                fileType = FileType.Excel;
-            else if (string.Equals(extension, ".pptx", StringComparison.OrdinalIgnoreCase))
-                fileType = FileType.PowerPoint;
-            else
-                return trace.Return<bool>(false);
-            var detectedType = fileType;
-            trace.State("fileType", () => detectedType);
-            return trace.Return<bool>(true);
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        fileType = default;
+        if (string.IsNullOrWhiteSpace(clientFileName))
+            return false;
+        var safeName = GetFileName(clientFileName);
+        var extension = Path.GetExtension(safeName);
+        if (string.Equals(extension, ".md", StringComparison.OrdinalIgnoreCase))
+            fileType = FileType.Markdown;
+        else if (string.Equals(extension, ".txt", StringComparison.OrdinalIgnoreCase))
+            fileType = FileType.PlainText;
+        else if (string.Equals(extension, ".docx", StringComparison.OrdinalIgnoreCase))
+            fileType = FileType.Word;
+        else if (string.Equals(extension, ".xlsx", StringComparison.OrdinalIgnoreCase))
+            fileType = FileType.Excel;
+        else if (string.Equals(extension, ".pptx", StringComparison.OrdinalIgnoreCase))
+            fileType = FileType.PowerPoint;
+        else
+            return false;
+        return true;
     }
 
     /// <summary>
@@ -65,28 +51,19 @@ public static class FileTypeDetector
     /// <exception cref="ArgumentOutOfRangeException">File type is unsupported.</exception>
     public static string GetTranslatedFileName(string? clientFileName, FileType fileType)
     {
-        using var trace = DebugTrace.Enter("FileTypeDetector", "GetTranslatedFileName", () => new { clientFileName, fileType });
-        try
+        var extension = fileType switch
         {
-            var extension = fileType switch
-            {
-                FileType.Markdown => ".md",
-                FileType.PlainText => ".txt",
-                FileType.Word => ".docx",
-                FileType.Excel => ".xlsx",
-                FileType.PowerPoint => ".pptx",
-                _ => throw new ArgumentOutOfRangeException(nameof(fileType))
-            };
-            if (string.IsNullOrWhiteSpace(clientFileName))
-                return trace.Return<string>($"document{extension}");
-            var safeName = GetFileName(clientFileName);
-            return trace.Return<string>(string.IsNullOrWhiteSpace(safeName) ? $"document{extension}" : safeName);
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+            FileType.Markdown => ".md",
+            FileType.PlainText => ".txt",
+            FileType.Word => ".docx",
+            FileType.Excel => ".xlsx",
+            FileType.PowerPoint => ".pptx",
+            _ => throw new ArgumentOutOfRangeException(nameof(fileType))
+        };
+        if (string.IsNullOrWhiteSpace(clientFileName))
+            return $"document{extension}";
+        var safeName = GetFileName(clientFileName);
+        return string.IsNullOrWhiteSpace(safeName) ? $"document{extension}" : safeName;
     }
 
     /// <summary>

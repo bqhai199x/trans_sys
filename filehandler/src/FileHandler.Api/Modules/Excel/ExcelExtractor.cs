@@ -4,7 +4,6 @@ using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Office;
 using S = DocumentFormat.OpenXml.Spreadsheet;
 using Xdr = DocumentFormat.OpenXml.Drawing.Spreadsheet;
@@ -55,12 +54,7 @@ public sealed class ExcelExtractor : IExcelExtractor
     /// <returns>Extraction plan.</returns>
     public ExcelPlan Analyze(OfficeSource source, OfficeInventory inventory, CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("ExcelExtractor", "Analyze", () => new { sourceHash = source.SourceHash });
-
-        try
-        {
-            trace.State("stage", () => "indexWorkbook");
-            using var ms = new MemoryStream(source.OriginalBytes);
+        using var ms = new MemoryStream(source.OriginalBytes);
             using var doc = SpreadsheetDocument.Open(ms, false, OfficeTextBindings.Settings(_options));
 
             if (doc.WorkbookPart?.Workbook?.Sheets is null)
@@ -86,7 +80,6 @@ public sealed class ExcelExtractor : IExcelExtractor
                 throw new InvalidOperationException("Excel package contains Chart or ChartSheet parts which are unsupported in v1.");
             }
 
-            trace.State("stage", () => "selectSheets");
             var sheetIndex = 0;
 
             foreach (var sheet in doc.WorkbookPart.Workbook.Sheets.Elements<Sheet>())
@@ -103,23 +96,12 @@ public sealed class ExcelExtractor : IExcelExtractor
                 var partUri = "/" + part.Uri.ToString().TrimStart('/');
                 var isWorksheet = part is WorksheetPart;
 
-                using var sheetItem = DebugTrace.Item(sheetIndex);
-                sheetItem.State("sheet", () => new
-                {
-                    id = relId,
-                    name = sheetName,
-                    uri = partUri,
-                    sdkType = part.GetType().Name
-                });
-
                 if (isHidden || !isWorksheet)
                 {
-                    sheetItem.State("decision", () => "excluded");
                     sheets.Add(new ExcelSheetSnapshot(sheetName, partUri, isHidden ? "Hidden" : "OtherPart", 0));
                     continue;
                 }
 
-                sheetItem.State("decision", () => "translate");
                 var worksheetPart = (WorksheetPart)part;
                 var worksheet = worksheetPart.Worksheet;
                 if (worksheet is null)
@@ -129,7 +111,6 @@ public sealed class ExcelExtractor : IExcelExtractor
                 allTables.AddRange(sheetTables);
                 var protectedCells = new ExcelProtectedCellIndex(sheetTables);
 
-                trace.State("stage", () => "walkCells");
                 var sheetUnitsBefore = units.Count;
                 var hiddenColumns = new bool[16385];
                 var hiddenColumnChanges = new int[16386];
@@ -194,12 +175,10 @@ public sealed class ExcelExtractor : IExcelExtractor
                         }
                         else if (cell.DataType?.Value == CellValues.InlineString) payload = cell.InlineString;
                         if (payload is null) continue;
-                        using var unitTrace = DebugTrace.Unit(units.Count, "extract");
-                        unitTrace.State("richTextXml", () => payload.OuterXml);
                         if (!templates.TryGetValue(payload, out var cached))
                         {
                             var cellText = payload.InnerText;
-                            if (string.IsNullOrWhiteSpace(cellText)) { unitTrace.Discard(); continue; }
+                            if (string.IsNullOrWhiteSpace(cellText)) continue;
                             if (payload.Descendants<S.PhoneticRun>().Any() || payload.Descendants<S.PhoneticProperties>().Any())
                                 throw new InvalidOperationException("Phonetic strings are unsupported.");
                             var builder = new OfficeTemplateBuilder(_options);
@@ -235,7 +214,6 @@ public sealed class ExcelExtractor : IExcelExtractor
                     }
                 }
 
-                trace.State("stage", () => "walkDrawings");
                 if (worksheetPart.DrawingsPart?.WorksheetDrawing is not null)
                 {
                     var drawingUri = "/" + worksheetPart.DrawingsPart.Uri.ToString().TrimStart('/');
@@ -245,9 +223,7 @@ public sealed class ExcelExtractor : IExcelExtractor
                     foreach (var p in worksheetPart.DrawingsPart.WorksheetDrawing.Descendants<A.Paragraph>())
                     {
                         paraOrdinal++;
-                        using var unitTrace = DebugTrace.Unit(units.Count, "extract");
                         var template = DrawingTextCodec.ReadParagraph(p, drawingLoc, paraOrdinal, _options);
-                        if (template is null) unitTrace.Discard();
                         if (template is not null)
                         {
                             var unitId = OfficeIdentity.CreateUnitId(
@@ -288,7 +264,6 @@ public sealed class ExcelExtractor : IExcelExtractor
                 throw new InvalidOperationException("Workbook contains Chart or SmartArt diagrams which are not supported for translation in office-v1.");
             }
 
-            trace.State("stage", () => "buildUnits");
             long totalPlanChars = 0;
             foreach (var u in units)
                 totalPlanChars += u.EncodedSource.Length;
@@ -299,17 +274,6 @@ public sealed class ExcelExtractor : IExcelExtractor
             if (units.Count > _options.MaxObjects || units.Any(u => u.Slots.Count + u.Anchors.Count > _options.MaxTokensPerUnit))
                 throw new FileLimitException("office_plan_limit_exceeded");
 
-            trace.Return(new { outcome = "success", unitCount = units.Count, sheetCount = sheets.Count, tableCount = allTables.Count });
             return new ExcelPlan(source.SourceHash, units, sheets, allTables);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
     }
 }

@@ -3,7 +3,6 @@ using System.Security.Cryptography;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Validation;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Office;
 
@@ -39,68 +38,46 @@ public sealed class OfficePackageValidator
         IReadOnlyList<string> selectedPartUris,
         CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("OfficePackageValidator", "ValidateSource", () => new
-        {
-            format = source.Format.ToString(),
-            sourceHash = source.SourceHash,
-            selectedPartCount = selectedPartUris.Count
-        });
+        cancellationToken.ThrowIfCancellationRequested();
 
-        try
+        using var package = OpenPackageReadOnly(source.OriginalBytes, source.Format);
+        var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Office2019) { MaxNumberOfErrors = _options.MaxSchemaErrors + 1 };
+        var errors = validator.Validate(package, cancellationToken).Take(_options.MaxSchemaErrors + 1).ToList();
+
+        var selectedSet = new HashSet<string>(selectedPartUris, StringComparer.OrdinalIgnoreCase);
+        var pending = new Stack<OpenXmlPart>(package.Parts.Select(p => p.OpenXmlPart));
+        var visited = new HashSet<OpenXmlPart>();
+        while (pending.TryPop(out var part))
         {
-            trace.State("stage", () => "checkPackage");
             cancellationToken.ThrowIfCancellationRequested();
-
-            using var package = OpenPackageReadOnly(source.OriginalBytes, source.Format);
-            var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Office2019) { MaxNumberOfErrors = _options.MaxSchemaErrors + 1 };
-            var errors = validator.Validate(package, cancellationToken).Take(_options.MaxSchemaErrors + 1).ToList();
-
-            var selectedSet = new HashSet<string>(selectedPartUris, StringComparer.OrdinalIgnoreCase);
-            var pending = new Stack<OpenXmlPart>(package.Parts.Select(p => p.OpenXmlPart));
-            var visited = new HashSet<OpenXmlPart>();
-            while (pending.TryPop(out var part))
+            if (!visited.Add(part)) continue;
+            foreach (var child in part.Parts)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!visited.Add(part)) continue;
-                foreach (var child in part.Parts)
-                {
-                    if (selectedSet.Contains(part.Uri.ToString())) selectedSet.Add(child.OpenXmlPart.Uri.ToString());
-                    pending.Push(child.OpenXmlPart);
-                }
+                if (selectedSet.Contains(part.Uri.ToString())) selectedSet.Add(child.OpenXmlPart.Uri.ToString());
+                pending.Push(child.OpenXmlPart);
             }
-            var fatalErrors = new List<FileError>();
-            if (errors.Count > _options.MaxSchemaErrors)
-                return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", "Vượt giới hạn kiểm tra schema.")]);
-
-            foreach (var error in errors)
-            {
-                var partUri = error.Part?.Uri?.ToString() ?? string.Empty;
-                var isSelected = selectedSet.Contains(partUri) || string.IsNullOrEmpty(partUri) || error.Part is WorkbookPart or PresentationPart or SharedStringTablePart;
-
-                if (isSelected)
-                {
-                    fatalErrors.Add(new FileError("invalid_office_package", $"Lỗi schema trong phần bắt buộc ({partUri}): {error.Description}"));
-                }
-            }
-
-            if (fatalErrors.Count > 0)
-            {
-                trace.Return(new { outcome = "failed", errorCount = fatalErrors.Count });
-                return OfficeValidationResult.Failure(fatalErrors);
-            }
-
-            trace.Return(new { outcome = "success", baselineErrorCount = errors.Count });
-            return OfficeValidationResult.Success();
         }
-        catch (OperationCanceledException)
+        var fatalErrors = new List<FileError>();
+        if (errors.Count > _options.MaxSchemaErrors)
+            return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", "Vượt giới hạn kiểm tra schema.")]);
+
+        foreach (var error in errors)
         {
-            throw;
+            var partUri = error.Part?.Uri?.ToString() ?? string.Empty;
+            var isSelected = selectedSet.Contains(partUri) || string.IsNullOrEmpty(partUri) || error.Part is WorkbookPart or PresentationPart or SharedStringTablePart;
+
+            if (isSelected)
+            {
+                fatalErrors.Add(new FileError("invalid_office_package", $"Lỗi schema trong phần bắt buộc ({partUri}): {error.Description}"));
+            }
         }
-        catch (Exception ex)
+
+        if (fatalErrors.Count > 0)
         {
-            trace.Error(ex);
-            throw;
+            return OfficeValidationResult.Failure(fatalErrors);
         }
+
+        return OfficeValidationResult.Success();
     }
 
     /// <summary>
@@ -117,101 +94,77 @@ public sealed class OfficePackageValidator
         IReadOnlyDictionary<string, OfficeEditMask> masks,
         CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("OfficePackageValidator", "ValidateOutput", () => new
-        {
-            sourceHash = source.SourceHash,
-            outputHash = output.OutputHash,
-            touchedPartCount = masks.Count
-        });
+        cancellationToken.ThrowIfCancellationRequested();
 
-        try
+        using var package = OpenPackageReadOnly(output.Content, source.Format);
+        var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Office2019) { MaxNumberOfErrors = _options.MaxSchemaErrors + 1 };
+        var errors = validator.Validate(package, cancellationToken).Take(_options.MaxSchemaErrors + 1).ToList();
+
+        using var originalPackage = OpenPackageReadOnly(source.OriginalBytes, source.Format);
+        var baseline = validator.Validate(originalPackage, cancellationToken).Take(_options.MaxSchemaErrors + 1).ToList();
+        if (baseline.Count > _options.MaxSchemaErrors)
+            return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", "Vượt giới hạn kiểm tra schema.")]);
+        var baselineCounts = baseline.GroupBy(ErrorKey).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+
+        var touchedSet = new HashSet<string>(masks.Keys, StringComparer.OrdinalIgnoreCase);
+        var fatalErrors = new List<FileError>();
+        if (errors.Count > _options.MaxSchemaErrors)
+            return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", "Vượt giới hạn kiểm tra schema.")]);
+
+        foreach (var error in errors)
         {
-            trace.State("stage", () => "reopenPackage");
+            var partUri = error.Part?.Uri?.ToString() ?? string.Empty;
+            var key = ErrorKey(error);
+            baselineCounts.TryGetValue(key, out var remaining);
+            if (remaining > 0) baselineCounts[key] = remaining - 1;
+            if (remaining == 0 || touchedSet.Contains(partUri) || string.IsNullOrEmpty(partUri))
+            {
+                fatalErrors.Add(new FileError("office_output_invalid", $"Lỗi schema trong tệp đầu ra ({partUri}): {error.Description}"));
+            }
+        }
+
+        // Verify preservation of untouched parts
+        using var sourceZip = new ZipArchive(new MemoryStream(source.OriginalBytes), ZipArchiveMode.Read, false);
+        using var outputZip = new ZipArchive(new MemoryStream(output.Content), ZipArchiveMode.Read, false);
+
+        var sourceEntries = sourceZip.Entries.ToDictionary(e => "/" + e.FullName.Replace('\\', '/').TrimStart('/'), StringComparer.OrdinalIgnoreCase);
+        var outputEntries = outputZip.Entries.ToDictionary(e => "/" + e.FullName.Replace('\\', '/').TrimStart('/'), StringComparer.OrdinalIgnoreCase);
+
+        if (sourceEntries.Count != outputEntries.Count)
+        {
+            fatalErrors.Add(new FileError("office_output_invalid", $"Số lượng phần tử trong gói đầu ra ({outputEntries.Count}) không khớp với gói nguồn ({sourceEntries.Count})."));
+        }
+
+        foreach (var (uri, sourceEntry) in sourceEntries)
+        {
             cancellationToken.ThrowIfCancellationRequested();
-
-            using var package = OpenPackageReadOnly(output.Content, source.Format);
-            var validator = new OpenXmlValidator(DocumentFormat.OpenXml.FileFormatVersions.Office2019) { MaxNumberOfErrors = _options.MaxSchemaErrors + 1 };
-            var errors = validator.Validate(package, cancellationToken).Take(_options.MaxSchemaErrors + 1).ToList();
-
-            using var originalPackage = OpenPackageReadOnly(source.OriginalBytes, source.Format);
-            var baseline = validator.Validate(originalPackage, cancellationToken).Take(_options.MaxSchemaErrors + 1).ToList();
-            if (baseline.Count > _options.MaxSchemaErrors)
-                return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", "Vượt giới hạn kiểm tra schema.")]);
-            var baselineCounts = baseline.GroupBy(ErrorKey).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
-
-            trace.State("stage", () => "checkSchema");
-            var touchedSet = new HashSet<string>(masks.Keys, StringComparer.OrdinalIgnoreCase);
-            var fatalErrors = new List<FileError>();
-            if (errors.Count > _options.MaxSchemaErrors)
-                return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", "Vượt giới hạn kiểm tra schema.")]);
-
-            foreach (var error in errors)
+            if (!outputEntries.TryGetValue(uri, out var outputEntry))
             {
-                var partUri = error.Part?.Uri?.ToString() ?? string.Empty;
-                var key = ErrorKey(error);
-                baselineCounts.TryGetValue(key, out var remaining);
-                if (remaining > 0) baselineCounts[key] = remaining - 1;
-                if (remaining == 0 || touchedSet.Contains(partUri) || string.IsNullOrEmpty(partUri))
+                fatalErrors.Add(new FileError("office_output_invalid", $"Phần tử {uri} bị thiếu trong gói đầu ra."));
+                continue;
+            }
+
+            if (touchedSet.Contains(uri) && !OfficeXmlInvariant.Matches(sourceEntry, outputEntry, masks[uri], _options))
+                fatalErrors.Add(new FileError("office_output_invalid", "Cấu trúc XML ngoài vùng dịch đã thay đổi."));
+
+            if (!touchedSet.Contains(uri))
+            {
+                // Must have identical CRC32 and payload hash
+                using var sourcePayload = sourceEntry.Open();
+                using var outputPayload = outputEntry.Open();
+                if (!SHA256.HashData(sourcePayload).AsSpan().SequenceEqual(SHA256.HashData(outputPayload)))
                 {
-                    fatalErrors.Add(new FileError("office_output_invalid", $"Lỗi schema trong tệp đầu ra ({partUri}): {error.Description}"));
+                    fatalErrors.Add(new FileError("office_output_invalid", $"Phần tử không chạm {uri} bị biến đổi dữ liệu (CRC-32 mismatch)."));
                 }
             }
-
-            trace.State("stage", () => "comparePayloads");
-            // Verify preservation of untouched parts
-            using var sourceZip = new ZipArchive(new MemoryStream(source.OriginalBytes), ZipArchiveMode.Read, false);
-            using var outputZip = new ZipArchive(new MemoryStream(output.Content), ZipArchiveMode.Read, false);
-
-            var sourceEntries = sourceZip.Entries.ToDictionary(e => "/" + e.FullName.Replace('\\', '/').TrimStart('/'), StringComparer.OrdinalIgnoreCase);
-            var outputEntries = outputZip.Entries.ToDictionary(e => "/" + e.FullName.Replace('\\', '/').TrimStart('/'), StringComparer.OrdinalIgnoreCase);
-
-            if (sourceEntries.Count != outputEntries.Count)
-            {
-                fatalErrors.Add(new FileError("office_output_invalid", $"Số lượng phần tử trong gói đầu ra ({outputEntries.Count}) không khớp với gói nguồn ({sourceEntries.Count})."));
-            }
-
-            foreach (var (uri, sourceEntry) in sourceEntries)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!outputEntries.TryGetValue(uri, out var outputEntry))
-                {
-                    fatalErrors.Add(new FileError("office_output_invalid", $"Phần tử {uri} bị thiếu trong gói đầu ra."));
-                    continue;
-                }
-
-                if (touchedSet.Contains(uri) && !OfficeXmlInvariant.Matches(sourceEntry, outputEntry, masks[uri], _options))
-                    fatalErrors.Add(new FileError("office_output_invalid", "Cấu trúc XML ngoài vùng dịch đã thay đổi."));
-
-                if (!touchedSet.Contains(uri))
-                {
-                    // Must have identical CRC32 and payload hash
-                    using var sourcePayload = sourceEntry.Open();
-                    using var outputPayload = outputEntry.Open();
-                    if (!SHA256.HashData(sourcePayload).AsSpan().SequenceEqual(SHA256.HashData(outputPayload)))
-                    {
-                        fatalErrors.Add(new FileError("office_output_invalid", $"Phần tử không chạm {uri} bị biến đổi dữ liệu (CRC-32 mismatch)."));
-                    }
-                }
-            }
-
-            if (fatalErrors.Count > 0)
-            {
-                trace.Return(new { outcome = "failed", errorCount = fatalErrors.Count });
-                return OfficeValidationResult.Failure(fatalErrors);
-            }
-
-            trace.Return(new { outcome = "success", checkedPartsCount = outputEntries.Count });
-            return OfficeValidationResult.Success();
         }
-        catch (OperationCanceledException)
+
+        if (fatalErrors.Count > 0)
         {
-            throw;
+            return OfficeValidationResult.Failure(fatalErrors);
         }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+
+        return OfficeValidationResult.Success();
     }
 
     /// <summary>

@@ -51,7 +51,7 @@ public sealed class GlobalExceptionHandlerTests
     }
 
     /// <summary>
-    /// Captures ordinary logger output separately from diagnostic trace JSON.
+    /// Captures logger output for exception handling assertions.
     /// </summary>
     private sealed class CapturingLogger : ILogger<GlobalExceptionHandler>
     {

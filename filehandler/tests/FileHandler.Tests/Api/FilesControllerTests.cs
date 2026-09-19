@@ -4,9 +4,6 @@ using FileHandler.Api.Contracts;
 using FileHandler.Api.Controllers;
 using FileHandler.Api.Modules.Markdown;
 using FileHandler.Api.Modules.PlainText;
-using FileHandler.Api.Modules.Word;
-using FileHandler.Api.Modules.Excel;
-using FileHandler.Api.Modules.PowerPoint;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
@@ -14,25 +11,37 @@ using Microsoft.Extensions.Options;
 namespace FileHandler.Tests.Api;
 
 /// <summary>
-/// Unit tests for files controller actions and validations.
+/// Unit tests for Markdown and PlainText format controllers actions and validations.
 /// </summary>
 public sealed class FilesControllerTests
 {
 
     /// <summary>
-    /// Creates controller with configured processing limits.
+    /// Creates MarkdownController with configured processing limits.
     /// </summary>
     /// <param name="options">File processing limits.</param>
     /// <returns>Controller configured for testing.</returns>
-    private static FilesController Create(FileHandlingOptions? options = null)
+    private static MarkdownController CreateMarkdown(FileHandlingOptions? options = null)
     {
         var configured = Options.Create(options ?? new());
-        return new(
-            MarkdownService.Create(configured),
-            new PlainTextService(configured),
-            WordService.Create(configured),
-            ExcelService.Create(configured),
-            PowerPointService.Create(configured));
+        return new MarkdownController(MarkdownService.Create(configured), configured)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+    }
+
+    /// <summary>
+    /// Creates PlainTextController with configured processing limits.
+    /// </summary>
+    /// <param name="options">File processing limits.</param>
+    /// <returns>Controller configured for testing.</returns>
+    private static PlainTextController CreatePlainText(FileHandlingOptions? options = null)
+    {
+        var configured = Options.Create(options ?? new());
+        return new PlainTextController(new PlainTextService(configured), configured)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
     }
 
     /// <summary>
@@ -73,8 +82,9 @@ public sealed class FilesControllerTests
     [Fact]
     public async Task Import_ReturnsTexts()
     {
-        var response = Assert.IsType<OkObjectResult>(await Create().Import(new() { File = FileUpload() }, default));
-        Assert.Equal(new[] { "Hello" }, Assert.IsAssignableFrom<IReadOnlyList<string>>(response.Value));
+        var response = Assert.IsType<OkObjectResult>(await CreateMarkdown().Import(new MarkdownImportRequest { File = FileUpload() }, default));
+        var importResponse = Assert.IsAssignableFrom<MarkdownImportResponse>(response.Value);
+        Assert.Equal(new[] { "Hello" }, importResponse.Texts);
     }
 
     /// <summary>
@@ -84,11 +94,11 @@ public sealed class FilesControllerTests
     [Fact]
     public async Task Import_RejectsMissingUnsupportedAndInvalidSource()
     {
-        var controller = Create();
-        AssertError(await controller.Import(new(), default), 400, "missing_file");
-        AssertError(await controller.Import(new() { File = FileUpload("file.pdf") }, default), 415, "unsupported_file_type");
-        AssertError(await controller.Import(new() { File = FileUpload(bytes: [0xff]) }, default), 422, "invalid_encoding");
-        AssertError(await Create(new() { MaxFileBytes = 1 }).Import(new() { File = FileUpload() }, default), 413, "file_too_large");
+        var controller = CreateMarkdown();
+        AssertError(await controller.Import(new MarkdownImportRequest { File = null }, default), 400, "missing_file");
+        AssertError(await controller.Import(new MarkdownImportRequest { File = FileUpload("file.pdf") }, default), 415, "unsupported_file_type");
+        AssertError(await controller.Import(new MarkdownImportRequest { File = FileUpload(bytes: [0xff]) }, default), 422, "invalid_encoding");
+        AssertError(await CreateMarkdown(new() { MaxFileBytes = 1 }).Import(new MarkdownImportRequest { File = FileUpload() }, default), 413, "file_too_large");
     }
 
     /// <summary>
@@ -98,14 +108,12 @@ public sealed class FilesControllerTests
     [Fact]
     public async Task Export_ReturnsDownloadWithSafeName()
     {
-        var result = Assert.IsType<FileContentResult>(await Create().Export(new()
-        {
-            File = FileUpload("../../guide.md"),
-            TranslatedTexts = "[\"Bonjour\"]"
-        }, default));
+        var controller = CreateMarkdown();
+        var result = Assert.IsType<FileContentResult>(await controller.Export(new MarkdownExportRequest { File = FileUpload("../../guide.md"), Texts = "[\"Bonjour\"]" }, default));
         Assert.Equal("Bonjour", Encoding.UTF8.GetString(result.FileContents));
         Assert.Equal(MarkdownService.ContentType, result.ContentType);
         Assert.Equal("guide.md", result.FileDownloadName);
+        Assert.True(controller.Response.Headers.ContainsKey("X-File-Metadata"));
     }
 
     /// <summary>
@@ -115,11 +123,7 @@ public sealed class FilesControllerTests
     [Fact]
     public async Task Export_AcceptsLenientJsonWithNewlinesAndTrailingCommas()
     {
-        var result = Assert.IsType<FileContentResult>(await Create().Export(new()
-        {
-            File = FileUpload(),
-            TranslatedTexts = "[\n  \"Hello\nWorld\",\n]"
-        }, default));
+        var result = Assert.IsType<FileContentResult>(await CreateMarkdown().Export(new MarkdownExportRequest { File = FileUpload(), Texts = "[\n  \"Hello\nWorld\",\n]" }, default));
         Assert.Equal("Hello\nWorld", Encoding.UTF8.GetString(result.FileContents));
     }
 
@@ -130,15 +134,15 @@ public sealed class FilesControllerTests
     /// <param name="code">Machine-readable error code.</param>
     /// <returns>Task representing test completion.</returns>
     [Theory]
-    [InlineData(null, "missing_translated_texts")]
+    [InlineData(null, "missing_texts")]
     [InlineData("[", "invalid_json")]
-    [InlineData("{}", "invalid_translated_texts")]
-    [InlineData("null", "invalid_translated_texts")]
-    [InlineData("[null]", "invalid_translated_texts")]
-    [InlineData("[1]", "invalid_translated_texts")]
-    [InlineData("[true]", "invalid_translated_texts")]
+    [InlineData("{}", "invalid_texts")]
+    [InlineData("null", "invalid_texts")]
+    [InlineData("[null]", "invalid_texts")]
+    [InlineData("[1]", "invalid_texts")]
+    [InlineData("[true]", "invalid_texts")]
     public async Task Export_RejectsInvalidJsonContract(string? json, string code) =>
-        AssertError(await Create().Export(new() { File = FileUpload(), TranslatedTexts = json }, default), 400, code);
+        AssertError(await CreateMarkdown().Export(new MarkdownExportRequest { File = FileUpload(), Texts = json }, default), 400, code);
 
     /// <summary>
     /// Verifies source file and translation count validation.
@@ -147,9 +151,9 @@ public sealed class FilesControllerTests
     [Fact]
     public async Task Export_ValidatesFileAndTranslationCount()
     {
-        AssertError(await Create().Export(new(), default), 400, "missing_file");
-        AssertError(await Create().Export(new() { File = FileUpload("a.pdf"), TranslatedTexts = "[]" }, default), 415, "unsupported_file_type");
-        AssertError(await Create().Export(new() { File = FileUpload(), TranslatedTexts = "[]" }, default), 422, "translation_count_mismatch");
+        AssertError(await CreateMarkdown().Export(new MarkdownExportRequest(), default), 400, "missing_file");
+        AssertError(await CreateMarkdown().Export(new MarkdownExportRequest { File = FileUpload("a.pdf"), Texts = "[]" }, default), 415, "unsupported_file_type");
+        AssertError(await CreateMarkdown().Export(new MarkdownExportRequest { File = FileUpload(), Texts = "[]" }, default), 422, "translation_count_mismatch");
     }
 
     /// <summary>
@@ -168,11 +172,7 @@ public sealed class FilesControllerTests
         if (limit == "units") options.MaxUnits = 0;
         if (limit == "translation") options.MaxTranslationChars = 1;
         if (limit == "output") options.MaxOutputBytes = 1;
-        var result = Assert.IsType<ObjectResult>(await Create(options).Export(new()
-        {
-            File = FileUpload(),
-            TranslatedTexts = "[\"Bonjour\"]"
-        }, default));
+        var result = Assert.IsType<ObjectResult>(await CreateMarkdown(options).Export(new MarkdownExportRequest { File = FileUpload(), Texts = "[\"Bonjour\"]" }, default));
         Assert.Equal(413, result.StatusCode);
         Assert.Contains(Assert.IsAssignableFrom<IReadOnlyList<FileError>>(result.Value), x => x.Code == code);
     }
@@ -185,8 +185,8 @@ public sealed class FilesControllerTests
     public async Task Actions_PropagateCancellation()
     {
         var token = new CancellationToken(true);
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Create().Import(new() { File = FileUpload() }, token));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Create().Export(new() { File = FileUpload(), TranslatedTexts = "[\"Hi\"]" }, token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CreateMarkdown().Import(new MarkdownImportRequest { File = FileUpload() }, token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CreateMarkdown().Export(new MarkdownExportRequest { File = FileUpload(), Texts = "[\"Hi\"]" }, token));
     }
 
     /// <summary>
@@ -196,11 +196,7 @@ public sealed class FilesControllerTests
     [Fact]
     public async Task Export_ReturnsBadRequest_WhenUnicodeSurrogateIsInvalid()
     {
-        var result = Assert.IsType<BadRequestObjectResult>(await Create().Export(new()
-        {
-            File = FileUpload(),
-            TranslatedTexts = "[\"\\uD800\"]"
-        }, default));
+        var result = Assert.IsType<BadRequestObjectResult>(await CreateMarkdown().Export(new MarkdownExportRequest { File = FileUpload(), Texts = "[\"\\uD800\"]" }, default));
         Assert.Equal(400, result.StatusCode);
         Assert.Contains(Assert.IsAssignableFrom<IReadOnlyList<FileError>>(result.Value), x => x.Code == "invalid_json");
     }
@@ -213,11 +209,8 @@ public sealed class FilesControllerTests
     public async Task Export_AcceptsJsonWithCommentsAndRawNewlines()
     {
         var jsonWithComments = "[/* \"comment\" */ \"Line 1\nLine 2\"]";
-        var result = Assert.IsType<FileContentResult>(await Create().Export(new()
-        {
-            File = FileUpload("guide.txt", Encoding.UTF8.GetBytes("Line 1\nLine 2")),
-            TranslatedTexts = jsonWithComments
-        }, default));
+        var result = Assert.IsType<FileContentResult>(await CreatePlainText().Export(new PlainTextExportRequest { File = FileUpload("guide.txt", Encoding.UTF8.GetBytes("Line 1\nLine 2")), Texts = jsonWithComments }, default));
         Assert.NotNull(result.FileContents);
     }
 }
+

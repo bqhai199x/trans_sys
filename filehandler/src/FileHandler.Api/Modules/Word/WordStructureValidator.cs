@@ -1,6 +1,5 @@
 using DocumentFormat.OpenXml.Packaging;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Office;
 using W = DocumentFormat.OpenXml.Wordprocessing;
 
@@ -24,44 +23,24 @@ public sealed class WordStructureValidator
         WordPlan plan,
         CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("WordStructureValidator", "Validate", () => new
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var ms = new MemoryStream(outputBytes);
+        using var doc = WordprocessingDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
+
+        if (doc.MainDocumentPart?.Document?.Body is null)
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Tài liệu Word đầu ra thiếu phần thân.")]);
+
+        var roots = new OpenXmlPart[] { doc.MainDocumentPart }
+            .Concat(doc.MainDocumentPart.HeaderParts).Concat(doc.MainDocumentPart.FooterParts)
+            .Concat(new OpenXmlPart?[] { doc.MainDocumentPart.FootnotesPart, doc.MainDocumentPart.EndnotesPart }.OfType<OpenXmlPart>())
+            .Where(p => plan.Stories.Any(s => s.PartUri == p.Uri.ToString()));
+        var tablesAfter = roots.SelectMany(p => p.RootElement!.Descendants<W.Table>()).ToList();
+        if (tablesAfter.Count != plan.Tables.Count)
         {
-            unitCount = plan.Units.Count,
-            tableCount = plan.Tables.Count
-        });
-
-        try
-        {
-            trace.State("stage", () => "compareTopology");
-            cancellationToken.ThrowIfCancellationRequested();
-
-            using var ms = new MemoryStream(outputBytes);
-            using var doc = WordprocessingDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
-
-            if (doc.MainDocumentPart?.Document?.Body is null)
-                return OfficeValidationResult.Failure(new[] { new FileError("office_output_invalid", "Tài liệu Word đầu ra thiếu phần thân.") });
-
-            var roots = new OpenXmlPart[] { doc.MainDocumentPart }
-                .Concat(doc.MainDocumentPart.HeaderParts).Concat(doc.MainDocumentPart.FooterParts)
-                .Concat(new OpenXmlPart?[] { doc.MainDocumentPart.FootnotesPart, doc.MainDocumentPart.EndnotesPart }.OfType<OpenXmlPart>())
-                .Where(p => plan.Stories.Any(s => s.PartUri == p.Uri.ToString()));
-            var tablesAfter = roots.SelectMany(p => p.RootElement!.Descendants<W.Table>()).ToList();
-            if (tablesAfter.Count != plan.Tables.Count)
-            {
-                return OfficeValidationResult.Failure(new[] { new FileError("office_output_invalid", $"Số lượng bảng trong tài liệu đầu ra ({tablesAfter.Count}) không khớp với nguồn ({plan.Tables.Count}).") });
-            }
-
-            trace.Return(new { outcome = "success", checkedTables = tablesAfter.Count });
-            return OfficeValidationResult.Success();
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", $"Số lượng bảng trong tài liệu đầu ra ({tablesAfter.Count}) không khớp với nguồn ({plan.Tables.Count}).")]);
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+
+        return OfficeValidationResult.Success();
     }
 }

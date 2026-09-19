@@ -1,5 +1,4 @@
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Markdown;
 using FileHandler.Api.Modules.PlainText;
 using FileHandler.Api.Modules.Office;
@@ -12,7 +11,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.Configure<DebugTraceOptions>(builder.Configuration.GetSection(DebugTraceOptions.SectionName));
 builder.Services.Configure<FileHandlingOptions>(builder.Configuration.GetSection(FileHandlingOptions.SectionName));
 builder.Services.Configure<OfficeProcessingOptions>(builder.Configuration.GetSection(OfficeProcessingOptions.SectionName));
 
@@ -96,8 +94,27 @@ builder.Services.AddSwaggerGen(options =>
 });
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
-builder.Services.AddOptions<FormOptions>().Configure<IOptions<FileHandlingOptions>>((form, configured) =>
-    form.MultipartBodyLengthLimit = configured.Value.MaxMultipartBytes);
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(x =>
+{
+    x.ValueLengthLimit = int.MaxValue;
+    x.MultipartBodyLengthLimit = int.MaxValue;
+    x.MultipartBoundaryLengthLimit = int.MaxValue;
+    x.MultipartHeadersCountLimit = int.MaxValue;
+    x.MultipartHeadersLengthLimit = int.MaxValue;
+    x.ValueCountLimit = int.MaxValue;
+    x.BufferBodyLengthLimit = int.MaxValue;
+});
+
+builder.Services.Configure<Microsoft.AspNetCore.Server.Kestrel.Core.KestrelServerOptions>(options =>
+{
+    options.Limits.MaxRequestBodySize = null;
+});
+
+builder.Services.Configure<IISServerOptions>(options =>
+{
+    options.MaxRequestBodySize = int.MaxValue;
+    options.MaxRequestBodyBufferSize = int.MaxValue;
+});
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -115,13 +132,13 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
-app.UseMiddleware<DebugTraceMiddleware>();
 app.UseExceptionHandler();
 app.Use(async (context, next) =>
 {
-    var path = context.Request.Path;
-    if ((path.Equals("/import", StringComparison.OrdinalIgnoreCase) || path.Equals("/export", StringComparison.OrdinalIgnoreCase)) &&
-        context.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase))
+    var path = context.Request.Path.Value ?? string.Empty;
+    var isImportOrExport = (path.EndsWith("/import", StringComparison.OrdinalIgnoreCase) || path.EndsWith("/export", StringComparison.OrdinalIgnoreCase)) &&
+        context.Request.Method.Equals("POST", StringComparison.OrdinalIgnoreCase);
+    if (isImportOrExport)
     {
         var limits = context.RequestServices.GetRequiredService<IOptions<FileHandlingOptions>>().Value;
         if (context.Request.ContentLength > limits.MaxMultipartBytes)
@@ -153,7 +170,6 @@ app.Use(async (context, next) =>
 
     await next();
 });
-app.UseDefaultFiles();
 app.UseRouting();
 app.UseRateLimiter();
 app.UseStaticFiles();

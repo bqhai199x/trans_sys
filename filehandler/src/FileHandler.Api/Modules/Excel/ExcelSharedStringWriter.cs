@@ -1,7 +1,6 @@
 using System.Text;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Spreadsheet;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Office;
 using S = DocumentFormat.OpenXml.Spreadsheet;
 

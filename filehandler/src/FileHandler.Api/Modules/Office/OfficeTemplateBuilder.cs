@@ -1,7 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
 using DocumentFormat.OpenXml;
-using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Office;
 
@@ -125,14 +124,6 @@ internal sealed class OfficeTemplateBuilder
             _order.Add(slotId);
         }
         _merge = true;
-        DebugTrace.Current?.State("textSpan", () => new
-        {
-            text = value, offset, length, slotId, fingerprint,
-            properties = node.Parent?.GetFirstChild<DocumentFormat.OpenXml.Wordprocessing.RunProperties>()?.OuterXml ??
-                node.Parent?.GetFirstChild<DocumentFormat.OpenXml.Drawing.RunProperties>()?.OuterXml ??
-                node.Parent?.GetFirstChild<DocumentFormat.OpenXml.Spreadsheet.RunProperties>()?.OuterXml,
-            decision = _texts[^1].Length == value.Length ? "newSlot" : "merged"
-        });
         if (!_scalarHashes.TryGetValue(node, out var sourceHash))
             _scalarHashes[node] = sourceHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(node.Text)));
         if (_bindings.Count >= _limits.MaxBindings) throw new FileHandler.Api.Common.FileLimitException("office_plan_limit_exceeded");
@@ -155,7 +146,6 @@ internal sealed class OfficeTemplateBuilder
         _anchors.Add(new(id, kind, sourceHash));
         _order.Add(id);
         _merge = false;
-        DebugTrace.Current?.State("anchor", () => new { id, kind, sourceHash });
     }
 
     /// <summary>

@@ -1,5 +1,4 @@
 using Markdig;
-using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Markdown;
 
@@ -18,17 +17,6 @@ internal static class MarkdownProfile
     /// Builds Markdown pipeline for supported profile.
     /// </summary>
     /// <returns>Pipeline configured for supported Markdown extensions.</returns>
-    public static MarkdownPipeline CreatePipeline()
-    {
-        using var trace = DebugTrace.Enter("MarkdownProfile", "CreatePipeline", () => new { });
-        try
-        {
-            return trace.Return<MarkdownPipeline>(new MarkdownPipelineBuilder().UsePipeTables().UseTaskLists().UseEmphasisExtras().UseMathematics().UseYamlFrontMatter().Build());
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
-    }
+    public static MarkdownPipeline CreatePipeline() =>
+        new MarkdownPipelineBuilder().UsePipeTables().UseTaskLists().UseEmphasisExtras().UseMathematics().UseYamlFrontMatter().Build();
 }

@@ -18,8 +18,8 @@ public sealed class ExportOperationFilter : IOperationFilter
     /// <returns>No return value.</returns>
     public void Apply(OpenApiOperation operation, OperationFilterContext context)
     {
-        var isExport = context.ApiDescription.RelativePath?.Equals("export", StringComparison.OrdinalIgnoreCase) == true;
-        var isImport = context.ApiDescription.RelativePath?.Equals("import", StringComparison.OrdinalIgnoreCase) == true;
+        var isExport = context.ApiDescription.RelativePath?.EndsWith("export", StringComparison.OrdinalIgnoreCase) == true;
+        var isImport = context.ApiDescription.RelativePath?.EndsWith("import", StringComparison.OrdinalIgnoreCase) == true;
         if (!isExport && !isImport)
             return;
 
@@ -27,12 +27,12 @@ public sealed class ExportOperationFilter : IOperationFilter
             return;
 
         if (mediaType.Schema.Properties.TryGetValue("file", out var fileProp) && fileProp is OpenApiSchema fileSchema)
-            fileSchema.Description = "Tệp nguồn .md hoặc .txt, UTF-8 có hoặc không BOM. TXT chia đoạn bằng dòng trống và xử lý nội dung nguyên văn.";
+            fileSchema.Description = "Tệp nguồn cần xử lý, định dạng tương ứng với endpoint.";
 
         if (!isExport)
             return;
 
-        if (mediaType.Schema.Properties.TryGetValue("translatedTexts", out var prop) && prop is OpenApiSchema schema)
+        if (mediaType.Schema.Properties.TryGetValue("texts", out var prop) && prop is OpenApiSchema schema)
         {
             schema.Format = "textarea";
             schema.Description = "JSON array string chứa các bản dịch (ví dụ: [\"Xin chào\", \"Thế giới\"]).";

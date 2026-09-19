@@ -1,6 +1,5 @@
 using System.Text;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Office;
 
@@ -43,71 +42,52 @@ public sealed class OfficeTextCodec
     /// <returns>Plain or structured encoded string.</returns>
     public string Encode(OfficeTextTemplate template)
     {
-        using var trace = DebugTrace.Enter("OfficeTextCodec", "Encode", () => new
+        if (template.Mode == UnitMode.Plain)
         {
-            mode = template.Mode.ToString(),
-            slotCount = template.Slots.Count,
-            anchorCount = template.Anchors.Count
-        });
+            return template.Slots.Count > 0 ? template.Slots[0].OriginalText : string.Empty;
+        }
 
-        try
+        var sb = new StringBuilder();
+        if (template.Order is not null)
         {
-            if (template.Mode == UnitMode.Plain)
+            var slotsById = template.Slots.ToDictionary(s => s.SlotId);
+            foreach (var id in template.Order)
             {
-                var text = template.Slots.Count > 0 ? template.Slots[0].OriginalText : string.Empty;
-                trace.State("sourceText", () => text);
-                return trace.Return<string>(text);
-            }
-
-            var sb = new StringBuilder();
-            if (template.Order is not null)
-            {
-                var slotsById = template.Slots.ToDictionary(s => s.SlotId);
-                foreach (var id in template.Order)
+                if (slotsById.TryGetValue(id, out var slot))
                 {
-                    if (slotsById.TryGetValue(id, out var slot))
-                    {
-                        sb.Append(TranslationTokenSyntax.Open(id));
-                        TranslationTokenSyntax.AppendEscaped(sb, slot.OriginalText);
-                        sb.Append(TranslationTokenSyntax.Close(id));
-                    }
-                    else sb.Append(TranslationTokenSyntax.Anchor(id));
-                }
-                return trace.Return<string>(sb.ToString());
-            }
-            var slotIndex = 0;
-            var anchorIndex = 0;
-
-            // In structured mode, weave slots and anchors based on template order
-            // If template specifies slots and anchors sequentially:
-            while (slotIndex < template.Slots.Count || anchorIndex < template.Anchors.Count)
-            {
-                if (slotIndex < template.Slots.Count)
-                {
-                    var slot = template.Slots[slotIndex];
-                    sb.Append(TranslationTokenSyntax.Open(slot.SlotId));
+                    sb.Append(TranslationTokenSyntax.Open(id));
                     TranslationTokenSyntax.AppendEscaped(sb, slot.OriginalText);
-                    sb.Append(TranslationTokenSyntax.Close(slot.SlotId));
-                    slotIndex++;
+                    sb.Append(TranslationTokenSyntax.Close(id));
                 }
+                else sb.Append(TranslationTokenSyntax.Anchor(id));
+            }
+            return sb.ToString();
+        }
+        var slotIndex = 0;
+        var anchorIndex = 0;
 
-                if (anchorIndex < template.Anchors.Count)
-                {
-                    var anchor = template.Anchors[anchorIndex];
-                    sb.Append(TranslationTokenSyntax.Anchor(anchor.AnchorId));
-                    anchorIndex++;
-                }
+        // In structured mode, weave slots and anchors based on template order
+        // If template specifies slots and anchors sequentially:
+        while (slotIndex < template.Slots.Count || anchorIndex < template.Anchors.Count)
+        {
+            if (slotIndex < template.Slots.Count)
+            {
+                var slot = template.Slots[slotIndex];
+                sb.Append(TranslationTokenSyntax.Open(slot.SlotId));
+                TranslationTokenSyntax.AppendEscaped(sb, slot.OriginalText);
+                sb.Append(TranslationTokenSyntax.Close(slot.SlotId));
+                slotIndex++;
             }
 
-            var encoded = sb.ToString();
-            trace.State("sourceText", () => encoded);
-            return trace.Return<string>(encoded);
+            if (anchorIndex < template.Anchors.Count)
+            {
+                var anchor = template.Anchors[anchorIndex];
+                sb.Append(TranslationTokenSyntax.Anchor(anchor.AnchorId));
+                anchorIndex++;
+            }
         }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+
+        return sb.ToString();
     }
 
     /// <summary>
@@ -124,43 +104,24 @@ public sealed class OfficeTextCodec
         OfficeFormat format,
         CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("OfficeTextCodec", "ValidateAndDecode", () => new
+        if (texts.Count != units.Count)
         {
-            unitCount = units.Count,
-            translationCount = texts.Count
-        });
+            var error = new FileError("translation_count_mismatch", $"Số lượng bản dịch ({texts.Count}) không khớp với số lượng đơn vị ({units.Count}).");
+            return OfficeDecodeResult.Failure([error]);
+        }
 
-        try
+        var errors = new List<FileError>();
+        var decodedUnits = new List<OfficeDecodedUnit>(units.Count);
+        long totalTranslationChars = 0;
+
+        for (var i = 0; i < units.Count; i++)
         {
-            trace.State("stage", () => "checkCount");
-            if (texts.Count != units.Count)
-            {
-                var error = new FileError("translation_count_mismatch", $"Số lượng bản dịch ({texts.Count}) không khớp với số lượng đơn vị ({units.Count}).");
-                trace.Return(new { outcome = "failed", errorCodes = new[] { error.Code } });
-                return OfficeDecodeResult.Failure(new[] { error });
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (errors.Count >= _options.MaxErrors)
+                break;
 
-            trace.State("stage", () => "decodeUnits");
-            var errors = new List<FileError>();
-            var decodedUnits = new List<OfficeDecodedUnit>(units.Count);
-            long totalTranslationChars = 0;
-
-            for (var i = 0; i < units.Count; i++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (errors.Count >= _options.MaxErrors)
-                    break;
-
-                var unit = units[i];
-                var rawText = texts[i];
-
-                using var item = DebugTrace.Unit(i, "decode", () => new
-                {
-                    errors = errors.Where(e => e.Index == i).ToArray(),
-                    decoded = decodedUnits.LastOrDefault(d => d.Index == i)
-                });
-                item.State("source", () => unit);
-                item.State("encodedInput", () => rawText);
+            var unit = units[i];
+            var rawText = texts[i];
 
                 if (rawText is null)
                 {
@@ -234,22 +195,10 @@ public sealed class OfficeTextCodec
 
             if (errors.Count > 0)
             {
-                trace.Return(new { outcome = "failed", errorCount = errors.Count });
                 return OfficeDecodeResult.Failure(errors);
             }
 
-            trace.Return(new { outcome = "success", decodedCount = decodedUnits.Count });
             return OfficeDecodeResult.Success(decodedUnits);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
     }
 
     /// <summary>

@@ -1,5 +1,4 @@
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Markdown;
 
@@ -26,17 +25,8 @@ internal sealed record LineMap(int[] Starts)
     /// <returns>One-based line number containing this offset.</returns>
     public int GetLine(int offset)
     {
-        using var trace = DebugTrace.Enter("LineMap", "GetLine", () => new { offset });
-        try
-        {
-            var index = Array.BinarySearch(Starts, Math.Max(0, offset));
-            return trace.Return<int>(index >= 0 ? index + 1 : ~index);
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var index = Array.BinarySearch(Starts, Math.Max(0, offset));
+        return index >= 0 ? index + 1 : ~index;
     }
 
     /// <summary>
@@ -47,16 +37,7 @@ internal sealed record LineMap(int[] Starts)
     /// <returns>Inclusive, one-based source line range.</returns>
     public SourceLineRange GetRange(int start, int end)
     {
-        using var trace = DebugTrace.Enter("LineMap", "GetRange", () => new { start, end });
-        try
-        {
-            return trace.Return<SourceLineRange>(new(GetLine(start), GetLine(Math.Max(start, end - 1))));
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        return new(GetLine(start), GetLine(Math.Max(start, end - 1)));
     }
 }
 

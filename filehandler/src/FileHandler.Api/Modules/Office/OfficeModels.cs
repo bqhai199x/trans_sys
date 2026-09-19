@@ -593,40 +593,6 @@ public static class OfficeIdentity
     }
 
     /// <summary>
-    /// Builds deterministic lowercase 64-hex SHA-256 object identifier.
-    /// </summary>
-    /// <param name="profileVersion">Profile version identifier.</param>
-    /// <param name="sourceHash">Hexadecimal SHA-256 of source file.</param>
-    /// <param name="format">Document format.</param>
-    /// <param name="partUri">Canonical part URI.</param>
-    /// <param name="kind">Object kind.</param>
-    /// <param name="elementPath">Hierarchical element path.</param>
-    /// <returns>Deterministic 64-hex SHA-256 object ID.</returns>
-    public static string CreateObjectId(
-        string profileVersion,
-        string sourceHash,
-        OfficeFormat format,
-        string partUri,
-        OfficeObjectKind kind,
-        IReadOnlyList<OfficeElementPathSegment> elementPath)
-    {
-        var sb = new StringBuilder();
-        AppendLengthPrefixed(sb, profileVersion);
-        AppendLengthPrefixed(sb, sourceHash);
-        AppendLengthPrefixed(sb, format.ToString());
-        AppendLengthPrefixed(sb, partUri);
-        AppendLengthPrefixed(sb, kind.ToString());
-        foreach (var segment in elementPath)
-        {
-            AppendLengthPrefixed(sb, segment.NamespaceUri);
-            AppendLengthPrefixed(sb, segment.LocalName);
-            AppendLengthPrefixed(sb, segment.SiblingOrdinal.ToString());
-        }
-        var bytes = Encoding.UTF8.GetBytes(sb.ToString());
-        return Convert.ToHexStringLower(SHA256.HashData(bytes));
-    }
-
-    /// <summary>
     /// Appends length-prefixed string component to builder.
     /// </summary>
     /// <param name="builder">Target string builder.</param>

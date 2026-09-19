@@ -1,6 +1,6 @@
-/* Styling for translatedTexts multiline JSON textarea in Swagger UI */
+/* Styling for texts multiline JSON textarea in Swagger UI */
 .json-schema-textarea,
-textarea[name="translatedTexts"],
+textarea[name="texts"],
 .parameters textarea {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
     font-size: 13px !important;
@@ -20,7 +20,7 @@ textarea[name="translatedTexts"],
 }
 
 .json-schema-textarea:focus,
-textarea[name="translatedTexts"]:focus,
+textarea[name="texts"]:focus,
 .parameters textarea:focus {
     outline: none !important;
     border-color: #4990e2 !important;

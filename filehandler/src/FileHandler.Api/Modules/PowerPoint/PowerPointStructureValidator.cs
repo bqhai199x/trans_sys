@@ -1,6 +1,5 @@
 using DocumentFormat.OpenXml.Packaging;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Office;
 using P = DocumentFormat.OpenXml.Presentation;
 
@@ -24,40 +23,20 @@ public sealed class PowerPointStructureValidator
         PowerPointPlan plan,
         CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("PowerPointStructureValidator", "Validate", () => new
+        cancellationToken.ThrowIfCancellationRequested();
+
+        using var ms = new MemoryStream(outputBytes);
+        using var doc = PresentationDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
+
+        if (doc.PresentationPart?.Presentation?.SlideIdList is null)
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Tệp PowerPoint đầu ra thiếu danh sách trang trình chiếu.")]);
+
+        var slidesAfter = doc.PresentationPart.Presentation.SlideIdList.Elements<P.SlideId>().ToList();
+        if (slidesAfter.Count != plan.Slides.Count)
         {
-            unitCount = plan.Units.Count,
-            slideCount = plan.Slides.Count
-        });
-
-        try
-        {
-            trace.State("stage", () => "compareTopology");
-            cancellationToken.ThrowIfCancellationRequested();
-
-            using var ms = new MemoryStream(outputBytes);
-            using var doc = PresentationDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
-
-            if (doc.PresentationPart?.Presentation?.SlideIdList is null)
-                return OfficeValidationResult.Failure(new[] { new FileError("office_output_invalid", "Tệp PowerPoint đầu ra thiếu danh sách trang trình chiếu.") });
-
-            var slidesAfter = doc.PresentationPart.Presentation.SlideIdList.Elements<P.SlideId>().ToList();
-            if (slidesAfter.Count != plan.Slides.Count)
-            {
-                return OfficeValidationResult.Failure(new[] { new FileError("office_output_invalid", $"Số lượng slide đầu ra ({slidesAfter.Count}) không khớp với nguồn ({plan.Slides.Count}).") });
-            }
-
-            trace.Return(new { outcome = "success", validatedSlides = slidesAfter.Count });
-            return OfficeValidationResult.Success();
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", $"Số lượng slide đầu ra ({slidesAfter.Count}) không khớp với nguồn ({plan.Slides.Count}).")]);
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+
+        return OfficeValidationResult.Success();
     }
 }

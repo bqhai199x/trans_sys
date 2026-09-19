@@ -33,7 +33,7 @@ public sealed class FileConcurrencyTests
                 return Task.CompletedTask;
             });
             context.Request.Method = "POST";
-            context.Request.Path = "/import";
+            context.Request.Path = "/api/plaintext/import";
             context.Request.ContentType = "multipart/form-data; boundary=gate";
             context.Request.Body = body;
         });
@@ -64,7 +64,7 @@ public sealed class FileConcurrencyTests
     {
         using var form = new MultipartFormDataContent();
         form.Add(new StringContent("Hello"), "file", "a.txt");
-        return await client.PostAsync("/import", form, TestContext.Current.CancellationToken);
+        return await client.PostAsync("/api/plaintext/import", form, TestContext.Current.CancellationToken);
     }
 
     /// <summary>

@@ -1,6 +1,5 @@
 using DocumentFormat.OpenXml.Packaging;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Office;
 using Microsoft.Extensions.Options;
 
@@ -104,21 +103,11 @@ public sealed class PowerPointService : IFileHandler
     /// <returns>Task containing units or validation errors.</returns>
     public async Task<ImportResult> ImportAsync(Stream stream, CancellationToken cancellationToken = default)
     {
-        using var trace = DebugTrace.Enter("PowerPointService", "ImportAsync", () => new
-        {
-            format = "PowerPoint",
-            profile = "office-v1",
-            sourceCanRead = stream.CanRead,
-            sourceCanSeek = stream.CanSeek
-        });
-
         try
         {
-            trace.State("stage", () => "readSource");
             var readResult = await _reader.ReadAsync(new LimitedReadStream(stream, _fileHandlingOptions.MaxFileBytes, "file_too_large"), OfficeFormat.PowerPoint, cancellationToken).ConfigureAwait(false);
             if (readResult.Errors.Count > 0 || readResult.Source is null)
             {
-                trace.Return(new { outcome = "failed", errorCodes = readResult.Errors.Select(e => e.Code).ToArray() });
                 return new([], readResult.Errors);
             }
 
@@ -126,16 +115,11 @@ public sealed class PowerPointService : IFileHandler
             if (source.OriginalBytes.Length > _fileHandlingOptions.MaxFileBytes)
             {
                 var err = new FileError("file_too_large", $"Kích thước tệp ({source.OriginalBytes.Length} bytes) vượt quá giới hạn ({_fileHandlingOptions.MaxFileBytes} bytes).");
-                trace.Return(new { outcome = "failed", errorCodes = new[] { err.Code } });
                 return new([], [err]);
             }
 
-            trace.State("source", () => new { digest = source.SourceHash, size = source.OriginalBytes.Length, format = "PowerPoint" });
-
-            trace.State("stage", () => "inspectPackage");
             var inventory = _inspector.Inspect(source, cancellationToken);
 
-            trace.State("stage", () => "analyzeDocument");
             PowerPointPlan plan;
             try
             {
@@ -144,32 +128,23 @@ public sealed class PowerPointService : IFileHandler
             catch (InvalidOperationException ex) when (ex is not FileLimitException)
             {
                 var err = new FileError("office_unsupported_content", ex.Message);
-                trace.Return(new { outcome = "failed", errorCodes = new[] { err.Code } });
                 return new([], [err]);
             }
-
-            trace.State("plan", () => new { unitCount = plan.Units.Count, slideCount = plan.Slides.Count });
 
             if (plan.Units.Count > _fileHandlingOptions.MaxUnits)
             {
                 var err = new FileError("too_many_units", $"Số lượng đơn vị dịch ({plan.Units.Count}) vượt quá giới hạn ({_fileHandlingOptions.MaxUnits}).");
-                trace.Return(new { outcome = "failed", errorCodes = new[] { err.Code } });
                 return new([], [err]);
             }
 
-            trace.State("stage", () => "validatePlan");
             var selectedPartUris = plan.Slides.Where(s => s.Show).Select(s => s.PartUri).ToList();
             var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken);
             if (!sourceValidation.IsValid)
             {
-                trace.Return(new { outcome = "failed", errorCodes = sourceValidation.Errors.Select(e => e.Code).ToArray() });
                 return new([], sourceValidation.Errors);
             }
 
-            trace.State("stage", () => "extractTexts");
             var texts = plan.Units.Select(u => u.EncodedSource).ToArray();
-
-            trace.Return(new { outcome = "success", unitCount = texts.Length });
             return new(texts, []);
         }
         catch (InvalidDataException)
@@ -179,15 +154,6 @@ public sealed class PowerPointService : IFileHandler
         catch (FileLimitException ex)
         {
             return new([], [new FileError(ex.Code, ex.Message)]);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
         }
     }
 
@@ -200,22 +166,11 @@ public sealed class PowerPointService : IFileHandler
     /// <returns>Task containing output bytes or validation errors.</returns>
     public async Task<ExportResult> ExportAsync(Stream stream, IReadOnlyList<string> translations, CancellationToken cancellationToken = default)
     {
-        using var trace = DebugTrace.Enter("PowerPointService", "ExportAsync", () => new
-        {
-            format = "PowerPoint",
-            profile = "office-v1",
-            sourceCanRead = stream.CanRead,
-            sourceCanSeek = stream.CanSeek,
-            translationCount = translations.Count
-        });
-
         try
         {
-            trace.State("stage", () => "readSource");
             var readResult = await _reader.ReadAsync(new LimitedReadStream(stream, _fileHandlingOptions.MaxFileBytes, "file_too_large"), OfficeFormat.PowerPoint, cancellationToken).ConfigureAwait(false);
             if (readResult.Errors.Count > 0 || readResult.Source is null)
             {
-                trace.Return(new { outcome = "failed", errorCodes = readResult.Errors.Select(e => e.Code).ToArray() });
                 return new(null, ContentType, readResult.Errors);
             }
 
@@ -223,16 +178,11 @@ public sealed class PowerPointService : IFileHandler
             if (source.OriginalBytes.Length > _fileHandlingOptions.MaxFileBytes)
             {
                 var err = new FileError("file_too_large", $"Kích thước tệp ({source.OriginalBytes.Length} bytes) vượt quá giới hạn ({_fileHandlingOptions.MaxFileBytes} bytes).");
-                trace.Return(new { outcome = "failed", errorCodes = new[] { err.Code } });
                 return new(null, ContentType, [err]);
             }
 
-            trace.State("source", () => new { digest = source.SourceHash, size = source.OriginalBytes.Length, format = "PowerPoint" });
-
-            trace.State("stage", () => "inspectPackage");
             var inventory = _inspector.Inspect(source, cancellationToken);
 
-            trace.State("stage", () => "analyzeDocument");
             PowerPointPlan plan;
             try
             {
@@ -241,35 +191,27 @@ public sealed class PowerPointService : IFileHandler
             catch (InvalidOperationException ex) when (ex is not FileLimitException)
             {
                 var err = new FileError("office_unsupported_content", ex.Message);
-                trace.Return(new { outcome = "failed", errorCodes = new[] { err.Code } });
                 return new(null, ContentType, [err]);
             }
 
-            trace.State("plan", () => new { unitCount = plan.Units.Count, slideCount = plan.Slides.Count });
-
             if (plan.Units.Count > _fileHandlingOptions.MaxUnits)
                 throw new FileLimitException("too_many_units");
-            trace.State("stage", () => "validatePlan");
+
             var selectedPartUris = plan.Slides.Where(s => s.Show).Select(s => s.PartUri).ToList();
             var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken);
             if (!sourceValidation.IsValid)
             {
-                trace.Return(new { outcome = "failed", errorCodes = sourceValidation.Errors.Select(e => e.Code).ToArray() });
                 return new(null, ContentType, sourceValidation.Errors);
             }
 
-            trace.State("stage", () => "validateTranslations");
             var decodeResult = _codec.ValidateAndDecode(plan.Units, translations, OfficeFormat.PowerPoint, cancellationToken);
             if (decodeResult.Errors.Count > 0 || decodeResult.DecodedUnits is null)
             {
-                trace.Return(new { outcome = "failed", errorCodes = decodeResult.Errors.Select(e => e.Code).ToArray() });
                 return new(null, ContentType, decodeResult.Errors);
             }
 
-            trace.State("stage", () => "preparePatch");
             var patch = _applier.Prepare(plan, decodeResult.DecodedUnits, cancellationToken);
 
-            trace.State("stage", () => "checkIdentity");
             var isIdentity = true;
             for (var i = 0; i < plan.Units.Count; i++)
             {
@@ -282,21 +224,14 @@ public sealed class PowerPointService : IFileHandler
 
             if (isIdentity)
             {
-                trace.State("decision", () => "identity");
                 if (source.OriginalBytes.Length > _fileHandlingOptions.MaxOutputBytes)
                 {
                     var err = new FileError("output_too_large", "Kích thước tệp vượt quá giới hạn đầu ra cho phép.");
-                    trace.Return(new { outcome = "failed", errorCodes = new[] { err.Code } });
                     return new(null, ContentType, [err]);
                 }
 
-                trace.State("stage", () => "returnOutput");
-                trace.Return(new { outcome = "success", outputBytes = source.OriginalBytes.Length });
                 return new(source.OriginalBytes, ContentType, []);
             }
-
-            trace.State("decision", () => "patch");
-            trace.State("stage", () => "applyPatch");
 
             using var session = OfficeExportSession.Create(source, _options, _fileHandlingOptions);
             using (var docMs = new MemoryStream(source.OriginalBytes))
@@ -305,32 +240,25 @@ public sealed class PowerPointService : IFileHandler
                 _applier.Apply(session, doc, patch, cancellationToken);
             }
 
-            trace.State("stage", () => "serializeOutput");
             var output = await session.FinalizeAsync(cancellationToken).ConfigureAwait(false);
             if (output.OutputBytes > _fileHandlingOptions.MaxOutputBytes)
             {
                 var err = new FileError("output_too_large", "Kích thước tệp vượt quá giới hạn đầu ra cho phép.");
-                trace.Return(new { outcome = "failed", errorCodes = new[] { err.Code } });
                 return new(null, ContentType, [err]);
             }
 
-            trace.State("stage", () => "validateOutput");
             var outputValidation = _packageValidator.ValidateOutput(source, output, patch.EditMasks, cancellationToken);
             if (!outputValidation.IsValid)
             {
-                trace.Return(new { outcome = "failed", errorCodes = outputValidation.Errors.Select(e => e.Code).ToArray() });
                 return new(null, ContentType, outputValidation.Errors);
             }
 
             var structureValidation = _structureValidator.Validate(output.Content, plan, cancellationToken);
             if (!structureValidation.IsValid)
             {
-                trace.Return(new { outcome = "failed", errorCodes = structureValidation.Errors.Select(e => e.Code).ToArray() });
                 return new(null, ContentType, structureValidation.Errors);
             }
 
-            trace.State("stage", () => "returnOutput");
-            trace.Return(new { outcome = "success", outputBytes = output.OutputBytes });
             return new(output.Content, ContentType, []);
         }
         catch (InvalidDataException)
@@ -340,15 +268,6 @@ public sealed class PowerPointService : IFileHandler
         catch (FileLimitException ex)
         {
             return new(null, ContentType, [new FileError(ex.Code, ex.Message)]);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
         }
     }
 

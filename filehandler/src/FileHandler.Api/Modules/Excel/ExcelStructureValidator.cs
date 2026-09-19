@@ -1,7 +1,6 @@
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Office;
 using S = DocumentFormat.OpenXml.Spreadsheet;
 
@@ -25,52 +24,32 @@ public sealed class ExcelStructureValidator
         ExcelPlan plan,
         CancellationToken cancellationToken)
     {
-        using var trace = DebugTrace.Enter("ExcelStructureValidator", "Validate", () => new
-        {
-            unitCount = plan.Units.Count,
-            tableCount = plan.Tables.Count
-        });
+        cancellationToken.ThrowIfCancellationRequested();
 
-        try
-        {
-            trace.State("stage", () => "compareTopology");
-            cancellationToken.ThrowIfCancellationRequested();
+        using var ms = new MemoryStream(outputBytes);
+        using var doc = SpreadsheetDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
 
-            using var ms = new MemoryStream(outputBytes);
-            using var doc = SpreadsheetDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
+        if (doc.WorkbookPart?.Workbook?.Sheets is null)
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Sổ tính Excel đầu ra thiếu phần bảng tính.")]);
 
-            if (doc.WorkbookPart?.Workbook?.Sheets is null)
-                return OfficeValidationResult.Failure(new[] { new FileError("office_output_invalid", "Sổ tính Excel đầu ra thiếu phần bảng tính.") });
-
-            var tables = new Dictionary<(string Part, string Name), S.Table>();
-            foreach (var worksheet in doc.WorkbookPart.WorksheetParts)
-                foreach (var part in worksheet.TableDefinitionParts)
-                {
-                    if (part.Table is not { } table) continue;
-                    foreach (var name in new[] { table.DisplayName?.Value, table.Name?.Value }.OfType<string>().Distinct())
-                        if (!tables.TryAdd((worksheet.Uri.ToString(), name), table))
-                            return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Duplicate table identifier.")]);
-                }
-            foreach (var expected in plan.Tables)
+        var tables = new Dictionary<(string Part, string Name), S.Table>();
+        foreach (var worksheet in doc.WorkbookPart.WorksheetParts)
+            foreach (var part in worksheet.TableDefinitionParts)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!tables.TryGetValue((expected.PartUri, expected.TableName), out var table) ||
-                    !(table.TableColumns?.Elements<S.TableColumn>().Select(c => c.Name?.Value) ?? [])
-                        .SequenceEqual(expected.ColumnNames))
-                    return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Table definition changed.")]);
+                if (part.Table is not { } table) continue;
+                foreach (var name in new[] { table.DisplayName?.Value, table.Name?.Value }.OfType<string>().Distinct())
+                    if (!tables.TryAdd((worksheet.Uri.ToString(), name), table))
+                        return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Duplicate table identifier.")]);
             }
+        foreach (var expected in plan.Tables)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!tables.TryGetValue((expected.PartUri, expected.TableName), out var table) ||
+                !(table.TableColumns?.Elements<S.TableColumn>().Select(c => c.Name?.Value) ?? [])
+                    .SequenceEqual(expected.ColumnNames))
+                return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Table definition changed.")]);
+        }
 
-            trace.Return(new { outcome = "success", validatedTables = plan.Tables.Count });
-            return OfficeValidationResult.Success();
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            trace.Error(ex);
-            throw;
-        }
+        return OfficeValidationResult.Success();
     }
 }

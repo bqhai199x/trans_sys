@@ -3,10 +3,7 @@ using System.Text.Json;
 using FileHandler.Api.Common;
 using FileHandler.Api.Contracts;
 using FileHandler.Api.Controllers;
-using FileHandler.Api.Diagnostics;
 using FileHandler.Api.Modules.Excel;
-using FileHandler.Api.Modules.Markdown;
-using FileHandler.Api.Modules.PlainText;
 using FileHandler.Api.Modules.PowerPoint;
 using FileHandler.Api.Modules.Word;
 using Microsoft.AspNetCore.Http;
@@ -17,25 +14,51 @@ using Microsoft.Extensions.Options;
 namespace FileHandler.Tests.Modules.Office;
 
 /// <summary>
-/// Tests covering Office trace state, isolation, and FilesController API endpoints (TR01-TR14, API01-API10).
+/// Tests covering Word, Excel, and PowerPoint format controller endpoints.
 /// </summary>
-public sealed class OfficeTraceAndApiTests
+public sealed class OfficeControllerTests
 {
 
     /// <summary>
-    /// Creates configured FilesController instance for API tests.
+    /// Creates configured WordController instance for API tests.
     /// </summary>
     /// <param name="fileOptions">File handling limits.</param>
-    /// <returns>Configured FilesController instance.</returns>
-    private static FilesController CreateController(FileHandlingOptions? fileOptions = null)
+    /// <returns>Configured WordController instance.</returns>
+    private static WordController CreateWordController(FileHandlingOptions? fileOptions = null)
     {
         var configured = Options.Create(fileOptions ?? new());
-        return new FilesController(
-            MarkdownService.Create(configured),
-            new PlainTextService(configured),
-            WordService.Create(configured),
-            ExcelService.Create(configured),
-            PowerPointService.Create(configured));
+        return new WordController(WordService.Create(configured), configured)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+    }
+
+    /// <summary>
+    /// Creates configured ExcelController instance for API tests.
+    /// </summary>
+    /// <param name="fileOptions">File handling limits.</param>
+    /// <returns>Configured ExcelController instance.</returns>
+    private static ExcelController CreateExcelController(FileHandlingOptions? fileOptions = null)
+    {
+        var configured = Options.Create(fileOptions ?? new());
+        return new ExcelController(ExcelService.Create(configured), configured)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+    }
+
+    /// <summary>
+    /// Creates configured PowerPointController instance for API tests.
+    /// </summary>
+    /// <param name="fileOptions">File handling limits.</param>
+    /// <returns>Configured PowerPointController instance.</returns>
+    private static PowerPointController CreatePowerPointController(FileHandlingOptions? fileOptions = null)
+    {
+        var configured = Options.Create(fileOptions ?? new());
+        return new PowerPointController(PowerPointService.Create(configured), configured)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
     }
 
     /// <summary>
@@ -53,144 +76,136 @@ public sealed class OfficeTraceAndApiTests
         };
 
     /// <summary>
-    /// Verifies POST /import for Word document extracts texts through API (API01).
+    /// Verifies POST /api/word/import for Word document extracts texts through API.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task Import_WordDocument_ReturnsOkWithTexts()
     {
-        var controller = CreateController();
+        var controller = CreateWordController();
         var docx = OfficeFixtureFactory.CreateWordDocument("First paragraph", "Second paragraph");
         var file = MakeFormFile("test.docx", docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 
-        var result = await controller.Import(new ImportRequest { File = file }, default);
+        var result = await controller.Import(new WordImportRequest { File = file }, default);
 
         var okResult = Assert.IsType<OkObjectResult>(result);
-        var texts = Assert.IsAssignableFrom<IReadOnlyList<string>>(okResult.Value);
-        Assert.Equal(2, texts.Count);
-        Assert.Equal("First paragraph", texts[0]);
-        Assert.Equal("Second paragraph", texts[1]);
+        var response = Assert.IsAssignableFrom<WordImportResponse>(okResult.Value);
+        Assert.Equal(2, response.Texts.Count);
+        Assert.Equal("First paragraph", response.Texts[0]);
+        Assert.Equal("Second paragraph", response.Texts[1]);
     }
 
     /// <summary>
-    /// Verifies POST /export for Word document returns translated docx file (API02).
+    /// Verifies POST /api/word/export for Word document returns translated docx file.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task Export_WordDocument_ReturnsTranslatedFile()
     {
-        var controller = CreateController();
+        var controller = CreateWordController();
         var docx = OfficeFixtureFactory.CreateWordDocument("First paragraph");
         var file = MakeFormFile("test.docx", docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 
-        var result = await controller.Export(new ExportRequest
-        {
-            File = file,
-            TranslatedTexts = "[\"Doan van thu nhat\"]"
-        }, default);
+        var result = await controller.Export(new WordExportRequest { File = file, Texts = "[\"Doan van thu nhat\"]" }, default);
 
         var fileResult = Assert.IsType<FileContentResult>(result);
         Assert.Equal("application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileResult.ContentType);
         Assert.Equal("test.docx", fileResult.FileDownloadName);
         Assert.NotNull(fileResult.FileContents);
         Assert.True(fileResult.FileContents.Length > 0);
+        Assert.True(controller.Response.Headers.ContainsKey("X-File-Metadata"));
     }
 
     /// <summary>
-    /// Verifies POST /import for Excel document extracts texts through API (API03).
+    /// Verifies POST /api/excel/import for Excel document extracts texts through API.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task Import_ExcelDocument_ReturnsOkWithTexts()
     {
-        var controller = CreateController();
+        var controller = CreateExcelController();
         var xlsx = OfficeFixtureFactory.CreateExcelWithInlineStrings(new[] { new[] { "Cell1", "Cell2" } });
         var file = MakeFormFile("test.xlsx", xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
-        var result = await controller.Import(new ImportRequest { File = file }, default);
+        var result = await controller.Import(new ExcelImportRequest { File = file }, default);
 
         var okResult = Assert.IsType<OkObjectResult>(result);
-        var texts = Assert.IsAssignableFrom<IReadOnlyList<string>>(okResult.Value);
-        Assert.Equal(2, texts.Count);
+        var response = Assert.IsAssignableFrom<ExcelImportResponse>(okResult.Value);
+        Assert.Equal(2, response.Texts.Count);
     }
 
     /// <summary>
-    /// Verifies POST /export for Excel document returns translated xlsx file (API04).
+    /// Verifies POST /api/excel/export for Excel document returns translated xlsx file.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task Export_ExcelDocument_ReturnsTranslatedFile()
     {
-        var controller = CreateController();
+        var controller = CreateExcelController();
         var xlsx = OfficeFixtureFactory.CreateExcelWithInlineStrings(new[] { new[] { "Hello" } });
         var file = MakeFormFile("test.xlsx", xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
-        var result = await controller.Export(new ExportRequest
-        {
-            File = file,
-            TranslatedTexts = "[\"Xin chao\"]"
-        }, default);
+        var result = await controller.Export(new ExcelExportRequest { File = file, Texts = "[\"Xin chao\"]" }, default);
 
         var fileResult = Assert.IsType<FileContentResult>(result);
         Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileResult.ContentType);
         Assert.Equal("test.xlsx", fileResult.FileDownloadName);
+        Assert.True(controller.Response.Headers.ContainsKey("X-File-Metadata"));
     }
 
     /// <summary>
-    /// Verifies POST /import for PowerPoint document extracts texts through API (API05).
+    /// Verifies POST /api/powerpoint/import for PowerPoint document extracts texts through API.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task Import_PowerPointDocument_ReturnsOkWithTexts()
     {
-        var controller = CreateController();
+        var controller = CreatePowerPointController();
         var pptx = OfficeFixtureFactory.CreatePowerPointPresentation("Slide 1");
         var file = MakeFormFile("test.pptx", pptx, "application/vnd.openxmlformats-officedocument.presentationml.presentation");
 
-        var result = await controller.Import(new ImportRequest { File = file }, default);
+        var result = await controller.Import(new PowerPointImportRequest { File = file }, default);
 
         var okResult = Assert.IsType<OkObjectResult>(result);
-        var texts = Assert.IsAssignableFrom<IReadOnlyList<string>>(okResult.Value);
-        Assert.Single(texts);
-        Assert.Equal("Slide 1", texts[0]);
+        var response = Assert.IsAssignableFrom<PowerPointImportResponse>(okResult.Value);
+        Assert.Single(response.Texts);
+        Assert.Equal("Slide 1", response.Texts[0]);
     }
 
     /// <summary>
-    /// Verifies POST /export for PowerPoint document returns translated pptx file (API06).
+    /// Verifies POST /api/powerpoint/export for PowerPoint document returns translated pptx file.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task Export_PowerPointDocument_ReturnsTranslatedFile()
     {
-        var controller = CreateController();
+        var controller = CreatePowerPointController();
         var pptx = OfficeFixtureFactory.CreatePowerPointPresentation("Slide 1");
         var file = MakeFormFile("test.pptx", pptx, "application/vnd.openxmlformats-officedocument.presentationml.presentation");
 
-        var result = await controller.Export(new ExportRequest
-        {
-            File = file,
-            TranslatedTexts = "[\"Trang 1\"]"
-        }, default);
+        var result = await controller.Export(new PowerPointExportRequest { File = file, Texts = "[\"Trang 1\"]" }, default);
 
         var fileResult = Assert.IsType<FileContentResult>(result);
         Assert.Equal("application/vnd.openxmlformats-officedocument.presentationml.presentation", fileResult.ContentType);
         Assert.Equal("test.pptx", fileResult.FileDownloadName);
+        Assert.True(controller.Response.Headers.ContainsKey("X-File-Metadata"));
     }
 
     /// <summary>
-    /// Verifies quota limit exceeded returns 413 Payload Too Large (API07).
+    /// Verifies quota limit exceeded returns 413 Payload Too Large.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
     public async Task Import_FileTooLarge_Returns413PayloadTooLarge()
     {
-        var controller = CreateController(new FileHandlingOptions { MaxFileBytes = 50 });
+        var controller = CreateWordController(new FileHandlingOptions { MaxFileBytes = 50 });
         var docx = OfficeFixtureFactory.CreateWordDocument("Exceeds fifty bytes");
         var file = MakeFormFile("test.docx", docx, "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
 
-        var result = await controller.Import(new ImportRequest { File = file }, default);
+        var result = await controller.Import(new WordImportRequest { File = file }, default);
 
         var objectResult = Assert.IsType<ObjectResult>(result);
         Assert.Equal(StatusCodes.Status413PayloadTooLarge, objectResult.StatusCode);
     }
 }
+

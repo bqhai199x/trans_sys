@@ -18,8 +18,8 @@ public interface IFileHandler
     /// Applies translations to source stream and returns exported file.
     /// </summary>
     /// <param name="source">Readable source stream.</param>
-    /// <param name="translatedTexts">Translated units in source order.</param>
+    /// <param name="translations">Translated units in source order.</param>
     /// <param name="cancellationToken">Token for cancelling this operation.</param>
     /// <returns>Task containing exported bytes, media type, and validation errors.</returns>
-    Task<ExportResult> ExportAsync(Stream source, IReadOnlyList<string> translatedTexts, CancellationToken cancellationToken = default);
+    Task<ExportResult> ExportAsync(Stream source, IReadOnlyList<string> translations, CancellationToken cancellationToken = default);
 }

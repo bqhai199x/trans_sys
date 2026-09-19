@@ -1,7 +1,6 @@
 using System.Globalization;
 using System.Text;
 using FileHandler.Api.Common;
-using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Markdown;
 
@@ -18,77 +17,65 @@ internal static class MarkdownTokenCodec
     /// <returns>Public text and restoration template.</returns>
     internal static (string Text, MarkdownTokenTemplate Template) Encode(EncodedInline inline)
     {
-        using var trace = DebugTrace.Enter("MarkdownTokenCodec", "Encode", () => new { inline.Start, inline.End });
-        try
+        var tokens = inline.Tokens;
+        var parts = new List<MarkdownTokenPart>();
+        var owners = new Stack<int>();
+        string? previousStyle = null;
+        var runs = 0;
+        var anchors = 0;
+        for (var i = 0; i < tokens.Count; i++)
         {
-            var tokens = inline.Tokens;
-            var parts = new List<MarkdownTokenPart>();
-            var owners = new Stack<int>();
-            string? previousStyle = null;
-            var runs = 0;
-            var anchors = 0;
-            for (var i = 0; i < tokens.Count; i++)
+            var token = tokens[i];
+            if (token.IsMarker)
             {
-                var token = tokens[i];
-                if (token.IsMarker)
+                var definition = inline.Markers[token.Id];
+                if (definition.Kind == MarkerKind.Formatting)
                 {
-                    var definition = inline.Markers[token.Id];
-                    if (definition.Kind == MarkerKind.Formatting)
-                    {
-                        if (token.IsClosing) owners.Pop();
-                        else owners.Push(token.Id);
-                    }
-                    else if (!token.IsClosing)
-                    {
-                        parts.Add(new("k" + (anchors++).ToString(CultureInfo.InvariantCulture), [i], true, string.Empty));
-                        previousStyle = null;
-                    }
+                    if (token.IsClosing) owners.Pop();
+                    else owners.Push(token.Id);
                 }
-                else
+                else if (!token.IsClosing)
                 {
-                    var style = string.Join("/", owners.Reverse().Select(id => inline.Markers[id].IsEmphasis
-                        ? "emphasis:" + inline.Markers[id].OpenSource.Replace('_', '*')
-                        : "owner:" + id.ToString(CultureInfo.InvariantCulture)));
-                    if (parts.Count > 0 && !parts[^1].IsAnchor && previousStyle == style)
-                        parts[^1] = parts[^1] with
-                        {
-                            SourceText = parts[^1].SourceText + token.Value,
-                            TokenIndexes = [.. parts[^1].TokenIndexes, i]
-                        };
-                    else if (string.IsNullOrWhiteSpace(token.Value))
-                        parts.Add(new("k" + (anchors++).ToString(CultureInfo.InvariantCulture), [i], true, token.Value));
-                    else
-                        parts.Add(new("r" + (runs++).ToString(CultureInfo.InvariantCulture), [i], false, token.Value));
-                    previousStyle = style;
+                    parts.Add(new("k" + (anchors++).ToString(CultureInfo.InvariantCulture), [i], true, string.Empty));
+                    previousStyle = null;
                 }
             }
+            else
+            {
+                var style = string.Join("/", owners.Reverse().Select(id => inline.Markers[id].IsEmphasis
+                    ? "emphasis:" + inline.Markers[id].OpenSource.Replace('_', '*')
+                    : "owner:" + id.ToString(CultureInfo.InvariantCulture)));
+                if (parts.Count > 0 && !parts[^1].IsAnchor && previousStyle == style)
+                    parts[^1] = parts[^1] with
+                    {
+                        SourceText = parts[^1].SourceText + token.Value,
+                        TokenIndexes = [.. parts[^1].TokenIndexes, i]
+                    };
+                else if (string.IsNullOrWhiteSpace(token.Value))
+                    parts.Add(new("k" + (anchors++).ToString(CultureInfo.InvariantCulture), [i], true, token.Value));
+                else
+                    parts.Add(new("r" + (runs++).ToString(CultureInfo.InvariantCulture), [i], false, token.Value));
+                previousStyle = style;
+            }
+        }
 
-            var structured = runs != 1 || anchors != 0;
-            var builder = new StringBuilder();
-            foreach (var part in parts)
-            {
-                if (!structured)
-                    builder.Append(part.SourceText);
-                else if (part.IsAnchor)
-                    builder.Append(TranslationTokenSyntax.Anchor(part.Id));
-                else
-                {
-                    builder.Append(TranslationTokenSyntax.Open(part.Id));
-                    TranslationTokenSyntax.AppendEscaped(builder, part.SourceText);
-                    builder.Append(TranslationTokenSyntax.Close(part.Id));
-                }
-            }
-            var text = builder.ToString();
-            trace.State("template", () => new { structured, runs, anchors });
-            trace.State("sourceText", () => text);
-            trace.Return(new { structured, runs, anchors });
-            return (text, new(structured, tokens, parts));
-        }
-        catch (Exception exception)
+        var structured = runs != 1 || anchors != 0;
+        var builder = new StringBuilder();
+        foreach (var part in parts)
         {
-            trace.Error(exception);
-            throw;
+            if (!structured)
+                builder.Append(part.SourceText);
+            else if (part.IsAnchor)
+                builder.Append(TranslationTokenSyntax.Anchor(part.Id));
+            else
+            {
+                builder.Append(TranslationTokenSyntax.Open(part.Id));
+                TranslationTokenSyntax.AppendEscaped(builder, part.SourceText);
+                builder.Append(TranslationTokenSyntax.Close(part.Id));
+            }
         }
+        var text = builder.ToString();
+        return (text, new(structured, tokens, parts));
     }
 
     /// <summary>
@@ -102,65 +89,50 @@ internal static class MarkdownTokenCodec
     internal static (IReadOnlyList<MarkerToken> Tokens, FileError? Error) Decode(
         MarkdownTokenTemplate template, string translation, int index, SourceLineRange line)
     {
-        using var trace = DebugTrace.Enter("MarkdownTokenCodec", "Decode", () => new { index, template.Structured, translation });
-        try
+        var restored = template.Tokens.ToArray();
+        var offset = 0;
+        var hasContent = false;
+        foreach (var part in template.Parts)
         {
-            var restored = template.Tokens.ToArray();
-            var offset = 0;
-            var hasContent = false;
-            foreach (var part in template.Parts)
+            var marker = part.IsAnchor ? TranslationTokenSyntax.Anchor(part.Id) : TranslationTokenSyntax.Open(part.Id);
+            string text;
+            if (!template.Structured)
+                text = translation;
+            else
             {
-                var marker = part.IsAnchor ? TranslationTokenSyntax.Anchor(part.Id) : TranslationTokenSyntax.Open(part.Id);
-                string text;
-                if (!template.Structured)
-                    text = translation;
-                else
-                {
-                    if (!translation.AsSpan(offset).StartsWith(marker, StringComparison.Ordinal))
-                        return Reject(trace, index, line, "invalid_marker_syntax", marker);
-                    offset += marker.Length;
-                    if (part.IsAnchor)
-                        continue;
-                    if (!TranslationTokenSyntax.TryReadText(translation, ref offset, TranslationTokenSyntax.Close(part.Id), out text))
-                        return Reject(trace, index, line, "invalid_marker_syntax", marker);
-                }
-                hasContent |= !string.IsNullOrWhiteSpace(text);
-                foreach (var tokenIndex in part.TokenIndexes)
-                    restored[tokenIndex] = restored[tokenIndex] with { Value = tokenIndex == part.TokenIndexes[0] ? text : string.Empty };
+                if (!translation.AsSpan(offset).StartsWith(marker, StringComparison.Ordinal))
+                    return Reject(index, line, "invalid_marker_syntax", marker);
+                offset += marker.Length;
+                if (part.IsAnchor)
+                    continue;
+                if (!TranslationTokenSyntax.TryReadText(translation, ref offset, TranslationTokenSyntax.Close(part.Id), out text))
+                    return Reject(index, line, "invalid_marker_syntax", marker);
             }
-            if (template.Structured && offset != translation.Length)
-                return Reject(trace, index, line, "invalid_marker_syntax", null);
-            if (!hasContent)
-                return Reject(trace, index, line, "empty_translation", null);
-            trace.State("validation", () => "valid");
-            trace.Return(new { outcome = "success", tokenCount = restored.Length });
-            return (restored, null);
+            hasContent |= !string.IsNullOrWhiteSpace(text);
+            foreach (var tokenIndex in part.TokenIndexes)
+                restored[tokenIndex] = restored[tokenIndex] with { Value = tokenIndex == part.TokenIndexes[0] ? text : string.Empty };
         }
-        catch (Exception exception)
-        {
-            trace.Error(exception);
-            throw;
-        }
-
+        if (template.Structured && offset != translation.Length)
+            return Reject(index, line, "invalid_marker_syntax", null);
+        if (!hasContent)
+            return Reject(index, line, "empty_translation", null);
+        return (restored, null);
     }
 
     /// <summary>
     /// Completes failed decoding without exposing internal preservation syntax.
     /// </summary>
-    /// <param name="trace">Active decoder trace.</param>
     /// <param name="index">Zero-based translation index.</param>
     /// <param name="line">Original source line range.</param>
     /// <param name="code">Public error code.</param>
     /// <param name="marker">Expected public token, when available.</param>
     /// <returns>Empty token list with located validation error.</returns>
     private static (IReadOnlyList<MarkerToken> Tokens, FileError? Error) Reject(
-        TraceCall trace, int index, SourceLineRange line, string code, string? marker)
+        int index, SourceLineRange line, string code, string? marker)
     {
         var error = new FileError(code, code == "empty_translation"
             ? "Đơn vị dịch phải có nội dung trong ít nhất một slot."
             : "Bản dịch phải giữ nguyên token ox, thứ tự và cú pháp escape của nguồn.", index, line, marker);
-        trace.State("validation", () => new { error.Code, error.Index, error.Marker });
-        trace.Return(new { outcome = "failed", code });
         return ([], error);
     }
 }

@@ -19,12 +19,8 @@ Các unit test gọi trực tiếp method public/internal. Method private đư�
 | MarkdownProfile, MarkdownExtractor | MarkdownExtractorTests, MarkdownProfileTests | Parse, spans, cấu trúc, formatting lồng nhau, nội dung bảo vệ, newline, giới hạn unit |
 | MarkdownTranslationApplier | MarkdownTranslationApplierTests | ValidateBatch, DecodeTranslation, EscapeText thông qua Apply; validation, marker, patch, cancellation |
 | MarkdownService | MarkdownServiceTests, MarkdownServiceBoundaryTests, MarkdownProfileTests | Import/export, round trip, giới hạn tài nguyên, lỗi nguồn, concurrency |
-| FilesController | FilesControllerTests | Import, Export, ErrorResult/Errors qua action, JSON contract, HTTP status, download |
-| DebugController | DebugControllerTests | Toggle trace, status, list logs, get detail, delete log, an toàn I/O |
+| MarkdownController, PlainTextController | FilesControllerTests | Import, Export, ErrorResult/Errors qua action, JSON contract, HTTP status, download |
+| WordController, ExcelController, PowerPointController | OfficeControllerTests | Import, Export Office qua action, JSON contract, metadata header, download |
 | GlobalExceptionHandler | GlobalExceptionHandlerTests | HTTP 413/500 và không lộ nội dung exception |
-| DebugTrace, TraceCall, TraceSession | TraceSessionTests | Ambient scope, input/state/output/error/cancel, no-op, escaping, truncation, dispose |
-| TraceValue | TraceValueTests | Snapshot qua Format, collections, giới hạn, lazy sequence, stream, HTTP result |
-| DebugTraceMiddleware | DebugTraceMiddlewareTests | Bật/tắt, lỗi tạo file, lỗi downstream, khôi phục context; Warn với logger lỗi |
-| TraceStatePlacement | TraceStatePlacementTests | Thứ tự và cấu trúc state trong log JSON, item grouping, reverse patch, buffer snapshot |
 
-`Api/FilesApiTests.cs` và `Api/DebugTraceTests.cs` kiểm tra tích hợp qua HTTP host. Bảng trên mô tả phạm vi hành vi; không phải báo cáo 100% line/branch coverage. Constructor, property và code do compiler sinh không có test riêng chỉ để tăng coverage.
+`Api/FilesApiTests.cs` kiểm tra tích hợp qua HTTP host. Bảng trên mô tả phạm vi hành vi; không phải báo cáo 100% line/branch coverage. Constructor, property và code do compiler sinh không có test riêng chỉ để tăng coverage.

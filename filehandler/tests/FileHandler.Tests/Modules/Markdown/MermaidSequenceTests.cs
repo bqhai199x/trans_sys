@@ -252,33 +252,45 @@ public sealed class MermaidSequenceTests
     }
 
     /// <summary>
-    /// Checks actual test_file.md extracts both flowchart and sequence diagram labels and round-trips.
+    /// Checks combined flowchart and sequence diagram document extracts labels and round-trips without errors.
     /// </summary>
-    /// <returns>Task completing after test_file.md assertions.</returns>
+    /// <returns>Task completing after import and export assertions.</returns>
     [Fact]
-    public async Task TestFileMd_FullExtractionAndRoundTrip()
+    public async Task CombinedFlowchartAndSequenceDiagram_ExtractsAndRoundTrips()
     {
-        var path = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "docs", "test_file.md"));
-        if (!File.Exists(path)) return;
-        var bytes = await File.ReadAllBytesAsync(path);
+        const string markdown = """
+            # Architecture Overview
+
+            ```mermaid
+            flowchart TD
+                A["Client Request"] --> B{"Validation"}
+                B -->|Valid| C["Process Order"]
+                B -->|Invalid| D["Error Handler"]
+            ```
+
+            ## Workflow Sequence
+
+            ```mermaid
+            sequenceDiagram
+                Client->>Server: Submit Request
+                Server-->>Database: Query Records
+                Database-->>Server: Return Data
+                Server-->>Client: Response Payload
+            ```
+            """;
+        var bytes = Encoding.UTF8.GetBytes(markdown);
         var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
         var imported = await service.ImportAsync(new MemoryStream(bytes));
         Assert.Empty(imported.Errors);
 
-        // Section 2 flowchart labels
-        Assert.Contains("Người dùng gửi câu hỏi", imported.Texts);
-        Assert.Contains("Initialization and Configuration", imported.Texts);
-        Assert.Contains("1. Query Understanding", imported.Texts);
-        Assert.Contains("Có candidates", imported.Texts);
-
-        // Section 6 sequence diagram labels
-        Assert.Contains("Người dùng", imported.Texts);
-        Assert.Contains("Pipeline Orchestration", imported.Texts);
-        Assert.Contains("Query", imported.Texts);
-        Assert.Contains("Query Object (retrieval plan)", imported.Texts);
-        Assert.Contains("Không tìm được đối tượng hoặc lỗi tìm kiếm", imported.Texts);
-        Assert.Contains("Answer + reasoning + evidence + confidence", imported.Texts);
-        Assert.Contains("Query Pipeline Result", imported.Texts);
+        Assert.Contains("Client Request", imported.Texts);
+        Assert.Contains("Validation", imported.Texts);
+        Assert.Contains("Process Order", imported.Texts);
+        Assert.Contains("Error Handler", imported.Texts);
+        Assert.Contains("Submit Request", imported.Texts);
+        Assert.Contains("Query Records", imported.Texts);
+        Assert.Contains("Return Data", imported.Texts);
+        Assert.Contains("Response Payload", imported.Texts);
 
         var identity = await service.ExportAsync(new MemoryStream(bytes), imported.Texts);
         Assert.Empty(identity.Errors);

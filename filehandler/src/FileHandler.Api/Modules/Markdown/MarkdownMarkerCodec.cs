@@ -1,5 +1,4 @@
 using System.Globalization;
-using FileHandler.Api.Diagnostics;
 
 namespace FileHandler.Api.Modules.Markdown;
 
@@ -28,28 +27,18 @@ internal sealed class MarkerAllocationContext
     /// <returns>Next available positive marker ID.</returns>
     public int AllocateId()
     {
-        using var trace = DebugTrace.Enter("MarkerAllocationContext", "AllocateId", () => new { next = _next, reservedCount = _reserved.Count });
-        try
+        while (_reserved.Contains(_next))
         {
-            while (_reserved.Contains(_next))
-            {
-                if (_next == int.MaxValue)
-                    throw new InvalidOperationException("Không còn marker ID khả dụng.");
-                _next++;
-            }
+            if (_next == int.MaxValue)
+                throw new InvalidOperationException("Không còn marker ID khả dụng.");
+            _next++;
+        }
 
-            var value = _next;
-            _reserved.Add(value);
-            if (_next < int.MaxValue)
-                _next++;
-            trace.State("next", () => _next);
-            return trace.Return<int>(value);
-        }
-        catch (Exception traceError)
-        {
-            trace.Error(traceError);
-            throw;
-        }
+        var value = _next;
+        _reserved.Add(value);
+        if (_next < int.MaxValue)
+            _next++;
+        return value;
     }
 }
 
@@ -66,106 +55,102 @@ internal static class MarkdownMarkerCodec
     /// </summary>
     /// <param name="source">Original Markdown source.</param>
     /// <returns>Marker IDs found in source text.</returns>
-    public static HashSet<int> FindReservedIds(string source) =>
-        DebugTrace.Trace("MarkdownMarkerCodec", "FindReservedIds", () => new { source }, _ =>
+    public static HashSet<int> FindReservedIds(string source)
+    {
+        var result = new HashSet<int>();
+        var i = 0;
+        while (i < source.Length)
         {
-            var result = new HashSet<int>();
-            var i = 0;
-            while (i < source.Length)
+            var markerPos = source.IndexOf(MarkerPrefix, i, StringComparison.Ordinal);
+            if (markerPos < 0)
+                break;
+
+            var p = markerPos + MarkerPrefix.Length;
+            var start = p;
+            while (p < source.Length && char.IsAsciiDigit(source[p]))
+                p++;
+
+            if (p > start && p < source.Length && (source[p] == '>' || (source[p] == '/' && p + 1 < source.Length && source[p + 1] == '>')))
             {
-                var markerPos = source.IndexOf(MarkerPrefix, i, StringComparison.Ordinal);
-                if (markerPos < 0)
-                    break;
-
-                var p = markerPos + MarkerPrefix.Length;
-                var start = p;
-                while (p < source.Length && char.IsAsciiDigit(source[p]))
-                    p++;
-
-                if (p > start && p < source.Length && (source[p] == '>' || (source[p] == '/' && p + 1 < source.Length && source[p + 1] == '>')))
-                {
-                    var digits = source.AsSpan(start, p - start);
-                    if (digits.Length <= 10 && int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0)
-                        result.Add(id);
-                }
-
-                i = markerPos + 1;
+                var digits = source.AsSpan(start, p - start);
+                if (digits.Length <= 10 && int.TryParse(digits, NumberStyles.None, CultureInfo.InvariantCulture, out var id) && id > 0)
+                    result.Add(id);
             }
 
-            return result;
-        });
+            i = markerPos + 1;
+        }
+
+        return result;
+    }
 
     /// <summary>
     /// Builds canonical opening marker for ID.
     /// </summary>
     /// <param name="id">Marker ID.</param>
     /// <returns>Canonical opening marker.</returns>
-    public static string Open(int id) =>
-        DebugTrace.Trace("MarkdownMarkerCodec", "Open", () => new { id }, _ => $"{MarkerPrefix}{id}>");
+    public static string Open(int id) => $"{MarkerPrefix}{id}>";
 
     /// <summary>
     /// Builds canonical closing marker for ID.
     /// </summary>
     /// <param name="id">Marker ID.</param>
     /// <returns>Canonical closing marker.</returns>
-    public static string Close(int id) =>
-        DebugTrace.Trace("MarkdownMarkerCodec", "Close", () => new { id }, _ => $"{MarkerPrefix}{id}/>");
+    public static string Close(int id) => $"{MarkerPrefix}{id}/>";
 
     /// <summary>
     /// Splits text into literal and marker tokens.
     /// </summary>
     /// <param name="value">Text containing literal segments and markers.</param>
     /// <returns>Literal and marker tokens in source order.</returns>
-    public static IReadOnlyList<MarkerToken> Parse(string value) =>
-        DebugTrace.Trace("MarkdownMarkerCodec", "Parse", () => new { value }, _ =>
+    public static IReadOnlyList<MarkerToken> Parse(string value)
+    {
+        var tokens = new List<MarkerToken>();
+        var textStart = 0;
+        var i = 0;
+        while (i < value.Length)
         {
-            var tokens = new List<MarkerToken>();
-            var textStart = 0;
-            var i = 0;
-            while (i < value.Length)
+            var markerPos = value.IndexOf(MarkerPrefix, i, StringComparison.Ordinal);
+            if (markerPos < 0)
+                break;
+
+            var p = markerPos + MarkerPrefix.Length;
+            var digitStart = p;
+            while (p < value.Length && char.IsAsciiDigit(value[p]))
+                p++;
+
+            if (p == digitStart)
             {
-                var markerPos = value.IndexOf(MarkerPrefix, i, StringComparison.Ordinal);
-                if (markerPos < 0)
-                    break;
-
-                var p = markerPos + MarkerPrefix.Length;
-                var digitStart = p;
-                while (p < value.Length && char.IsAsciiDigit(value[p]))
-                    p++;
-
-                if (p == digitStart)
-                {
-                    i = markerPos + 1;
-                    continue;
-                }
-
-                var closing = p < value.Length && value[p] == '/';
-                var end = closing ? p + 2 : p + 1;
-                if (end > value.Length || value[end - 1] != '>')
-                {
-                    i = markerPos + 1;
-                    continue;
-                }
-
-                if (!int.TryParse(value.AsSpan(digitStart, p - digitStart), out var id) || id <= 0)
-                {
-                    i = markerPos + 1;
-                    continue;
-                }
-
-                if (markerPos > textStart)
-                    tokens.Add(new(false, 0, value[textStart..markerPos], false));
-
-                tokens.Add(new(true, id, value[markerPos..end], closing));
-                i = end;
-                textStart = i;
+                i = markerPos + 1;
+                continue;
             }
 
-            if (textStart < value.Length)
-                tokens.Add(new(false, 0, value[textStart..], false));
+            var closing = p < value.Length && value[p] == '/';
+            var end = closing ? p + 2 : p + 1;
+            if (end > value.Length || value[end - 1] != '>')
+            {
+                i = markerPos + 1;
+                continue;
+            }
 
-            return tokens;
-        });
+            if (!int.TryParse(value.AsSpan(digitStart, p - digitStart), out var id) || id <= 0)
+            {
+                i = markerPos + 1;
+                continue;
+            }
+
+            if (markerPos > textStart)
+                tokens.Add(new(false, 0, value[textStart..markerPos], false));
+
+            tokens.Add(new(true, id, value[markerPos..end], closing));
+            i = end;
+            textStart = i;
+        }
+
+        if (textStart < value.Length)
+            tokens.Add(new(false, 0, value[textStart..], false));
+
+        return tokens;
+    }
 }
 
 /// <summary>

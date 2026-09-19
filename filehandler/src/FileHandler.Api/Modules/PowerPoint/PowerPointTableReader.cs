@@ -58,9 +58,7 @@ public sealed class PowerPointTableReader
                 foreach (var p in cell.TextBody.Elements<A.Paragraph>())
                 {
                     paraOrdinal++;
-                    using var unitTrace = FileHandler.Api.Diagnostics.DebugTrace.Unit(units.Count, "extract");
                     var template = DrawingTextCodec.ReadParagraph(p, cellLoc, paraOrdinal, limits);
-                    if (template is null) unitTrace.Discard();
                     if (template is not null)
                     {
                         var unitId = OfficeIdentity.CreateUnitId(
