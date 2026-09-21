@@ -108,12 +108,12 @@ public sealed class OfficeControllerTests
 
         var result = await controller.Export(new WordExportRequest { File = file, Texts = "[\"Doan van thu nhat\"]" }, default);
 
-        var fileResult = Assert.IsType<FileContentResult>(result);
-        Assert.Equal("application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileResult.ContentType);
-        Assert.Equal("test.docx", fileResult.FileDownloadName);
-        Assert.NotNull(fileResult.FileContents);
-        Assert.True(fileResult.FileContents.Length > 0);
-        Assert.True(controller.Response.Headers.ContainsKey("X-File-Metadata"));
+        var fileResult = Assert.IsType<MultipartFileResult>(result);
+        Assert.Equal("application/vnd.openxmlformats-officedocument.wordprocessingml.document", fileResult.Result.ContentType);
+        Assert.Equal("test.docx", fileResult.FileName);
+        Assert.NotNull(fileResult.Result.Content!);
+        Assert.True(fileResult.Result.Content!.Length > 0);
+        Assert.False(controller.Response.Headers.ContainsKey("X-File-Metadata"));
     }
 
     /// <summary>
@@ -131,7 +131,7 @@ public sealed class OfficeControllerTests
 
         var okResult = Assert.IsType<OkObjectResult>(result);
         var response = Assert.IsAssignableFrom<ExcelImportResponse>(okResult.Value);
-        Assert.Equal(2, response.Texts.Count);
+        Assert.Equal(new[] { "Sheet1", "Cell1", "Cell2" }, response.Texts);
     }
 
     /// <summary>
@@ -145,12 +145,12 @@ public sealed class OfficeControllerTests
         var xlsx = OfficeFixtureFactory.CreateExcelWithInlineStrings(new[] { new[] { "Hello" } });
         var file = MakeFormFile("test.xlsx", xlsx, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 
-        var result = await controller.Export(new ExcelExportRequest { File = file, Texts = "[\"Xin chao\"]" }, default);
+        var result = await controller.Export(new ExcelExportRequest { File = file, Texts = "[\"Sheet1\",\"Xin chao\"]" }, default);
 
-        var fileResult = Assert.IsType<FileContentResult>(result);
-        Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileResult.ContentType);
-        Assert.Equal("test.xlsx", fileResult.FileDownloadName);
-        Assert.True(controller.Response.Headers.ContainsKey("X-File-Metadata"));
+        var fileResult = Assert.IsType<MultipartFileResult>(result);
+        Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileResult.Result.ContentType);
+        Assert.Equal("test.xlsx", fileResult.FileName);
+        Assert.False(controller.Response.Headers.ContainsKey("X-File-Metadata"));
     }
 
     /// <summary>
@@ -185,10 +185,10 @@ public sealed class OfficeControllerTests
 
         var result = await controller.Export(new PowerPointExportRequest { File = file, Texts = "[\"Trang 1\"]" }, default);
 
-        var fileResult = Assert.IsType<FileContentResult>(result);
-        Assert.Equal("application/vnd.openxmlformats-officedocument.presentationml.presentation", fileResult.ContentType);
-        Assert.Equal("test.pptx", fileResult.FileDownloadName);
-        Assert.True(controller.Response.Headers.ContainsKey("X-File-Metadata"));
+        var fileResult = Assert.IsType<MultipartFileResult>(result);
+        Assert.Equal("application/vnd.openxmlformats-officedocument.presentationml.presentation", fileResult.Result.ContentType);
+        Assert.Equal("test.pptx", fileResult.FileName);
+        Assert.False(controller.Response.Headers.ContainsKey("X-File-Metadata"));
     }
 
     /// <summary>

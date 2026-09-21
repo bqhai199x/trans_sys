@@ -1,3 +1,4 @@
+using FileHandler.Api.Common;
 using FileHandler.Api.Modules.Office;
 
 namespace FileHandler.Api.Modules.PowerPoint;
@@ -20,7 +21,14 @@ public sealed record PowerPointSlideSnapshot(string SlideId, string PartUri, boo
 public sealed record PowerPointPlan(
     string SourceHash,
     IReadOnlyList<OfficeTranslationUnit> Units,
-    IReadOnlyList<PowerPointSlideSnapshot> Slides);
+    IReadOnlyList<PowerPointSlideSnapshot> Slides)
+{
+
+    /// <summary>
+    /// Source inventory, selected ranges and extraction exclusions.
+    /// </summary>
+    public FileMetadata Metadata { get; init; } = FileMetadata.Create("powerpoint");
+}
 
 /// <summary>
 /// Prepared patch for PowerPoint presentation.

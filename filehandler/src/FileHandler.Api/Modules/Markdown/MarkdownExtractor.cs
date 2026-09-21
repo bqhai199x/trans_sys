@@ -34,13 +34,20 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
         var document = ParseDocument(source.Text);
         var allocator = new MarkerAllocationContext([]);
         var units = new List<MarkdownUnit>();
+        var skipped = new List<SkipMetadata>();
 
         foreach (var block in document.Descendants())
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (block is FencedCodeBlock fence)
             {
-                foreach (var label in MermaidCodec.Extract(fence, cancellationToken))
+                var labels = MermaidCodec.Extract(fence, cancellationToken).ToArray();
+                if (labels.Length == 0)
+                {
+                    var mermaid = string.Equals(fence.Info, "mermaid", StringComparison.OrdinalIgnoreCase);
+                    skipped.Add(new(mermaid ? SkipCodes.UnsupportedMermaid : SkipCodes.ProtectedCodeBlock, mermaid ? SkipSeverity.Warning : SkipSeverity.Info, SkipStage.Extraction, SkipScope.Block, 1, mermaid ? ProcessingMessages.UnsupportedMermaid : ProcessingMessages.ProtectedCodeBlock, new(Line: source.Lines.GetRange(fence.Span.Start, fence.Span.End + 1))));
+                }
+                foreach (var label in labels)
                 {
                     units.Add(new(label.Start, label.End, label.Text, new Dictionary<int, MarkerDefinition>(),
                         source.Lines.GetRange(label.Start, label.End), false, "\n", false)
@@ -49,26 +56,32 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
                         MermaidQuoted = label.Quoted
                     });
                     if (units.Count > maxUnits)
-                        return new(source, [], [new("too_many_units", $"Tài liệu vượt giới hạn {maxUnits} đơn vị dịch.")]);
+                        return new(source, [], [new("too_many_units", ProcessingMessages.DocumentUnitLimit(maxUnits))]);
                 }
                 continue;
             }
             if (block is not LeafBlock { Inline: not null } leaf)
+            {
+                if (block is CodeBlock or HtmlBlock || block.GetType().Name.Contains("Yaml", StringComparison.Ordinal))
+                    skipped.Add(new(SkipCodes.ProtectedBlock, SkipSeverity.Info, SkipStage.Extraction, SkipScope.Block, 1, ProcessingMessages.ProtectedBlock, new(Line: source.Lines.GetRange(block.Span.Start, block.Span.End + 1))));
                 continue;
+            }
             if (block is CodeBlock)
                 continue;
+            foreach (var item in leaf.Inline.Descendants().Where(i => i is CodeInline or AutolinkInline or HtmlInline || i is LinkInline { IsImage: true }))
+                skipped.Add(new(SkipCodes.ProtectedInline, SkipSeverity.Info, SkipStage.Extraction, SkipScope.Inline, 1, ProcessingMessages.ProtectedInline, new(Line: source.Lines.GetRange(item.Span.Start, item.Span.End + 1))));
             var encoded = EncodeContainer(leaf.Inline, source.Text, allocator);
             if (encoded is null || !encoded.Tokens.Any(t => !t.IsMarker && !string.IsNullOrWhiteSpace(t.Value)))
                 continue;
             var (newlineReplacement, hasSoftBreak) = FindNewlinePolicy(leaf.Inline, source.Text);
             var wire = MarkdownTokenCodec.Encode(encoded);
-            units.Add(new(encoded.Start, encoded.End, wire.Text, encoded.Markers, source.Lines.GetRange(encoded.Start, encoded.End), leaf is HeadingBlock, newlineReplacement, hasSoftBreak, wire.Template));
+            units.Add(new(encoded.Start, encoded.End, wire.Text, encoded.Markers, source.Lines.GetRange(encoded.Start, encoded.End), leaf is HeadingBlock, newlineReplacement, hasSoftBreak, wire.Template) { BlockStart = leaf.Span.Start, BlockEnd = leaf.Span.End + 1 });
             if (units.Count > maxUnits)
-                return new(source, [], [new("too_many_units", $"Tài liệu vượt giới hạn {maxUnits} đơn vị dịch.")]);
+                return new(source, [], [new("too_many_units", ProcessingMessages.DocumentUnitLimit(maxUnits))]);
         }
 
         var hasInternalLinks = document.Descendants<LinkInline>().Any(x => x.Url?.StartsWith('#') == true);
-        return new(source, units, [], hasInternalLinks);
+        return new(source, units, [], hasInternalLinks) { Skipped = skipped };
     }
 
     /// <summary>
@@ -86,16 +99,9 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     /// <returns>Structural validation errors, if any.</returns>
     public IReadOnlyList<FileError> ValidateStructure(string original, string candidate)
     {
-        try
-        {
-            var before = BuildStructureSignature(ParseDocument(original), original);
-            var after = BuildStructureSignature(ParseDocument(candidate), candidate);
-            return before.SequenceEqual(after, StringComparer.Ordinal) ? [] : [new("invalid_structure", "Bản dịch làm thay đổi cấu trúc Markdown được bảo vệ.")];
-        }
-        catch
-        {
-            return [new("invalid_structure", "Không thể parse lại cấu trúc Markdown sau khi áp dụng bản dịch.")];
-        }
+        var before = BuildStructureSignature(ParseDocument(original), original);
+        var after = BuildStructureSignature(ParseDocument(candidate), candidate);
+        return before.SequenceEqual(after, StringComparer.Ordinal) ? [] : [new(SkipCodes.InvalidStructure, ProcessingMessages.MarkdownStructureChanged)];
     }
 
     /// <summary>

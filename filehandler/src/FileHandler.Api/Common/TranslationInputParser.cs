@@ -44,7 +44,7 @@ internal static class TranslationInputParser
         }
 
         if (string.IsNullOrWhiteSpace(jsonText))
-            return (false, null, new FileError("missing_texts", "Field texts là bắt buộc."));
+            return (false, null, new FileError("missing_texts", ProcessingMessages.MissingTexts));
 
         jsonText = jsonText.Trim();
 
@@ -61,12 +61,12 @@ internal static class TranslationInputParser
             }
             catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException or DecoderFallbackException)
             {
-                return (false, null, new FileError("invalid_json", "texts không phải JSON hợp lệ."));
+                return (false, null, new FileError("invalid_json", ProcessingMessages.InvalidJson));
             }
         }
         catch (Exception ex) when (ex is InvalidOperationException or FormatException or DecoderFallbackException)
         {
-            return (false, null, new FileError("invalid_json", "texts chứa chuỗi Unicode không hợp lệ."));
+            return (false, null, new FileError("invalid_json", ProcessingMessages.InvalidJsonUnicode));
         }
     }
 
@@ -102,16 +102,16 @@ internal static class TranslationInputParser
     private static (bool Success, IReadOnlyList<string>? Translations, FileError? Error) ExtractStringList(JsonElement arrayElement, FileHandlingOptions options)
     {
         if (arrayElement.ValueKind != JsonValueKind.Array)
-            return (false, null, new FileError("invalid_texts", "texts phải là JSON array chuỗi."));
+            return (false, null, new FileError("invalid_texts", ProcessingMessages.InvalidTexts));
 
         if (arrayElement.GetArrayLength() > options.MaxUnits)
-            return (false, null, new FileError("too_many_units", "Số lượng bản dịch vượt giới hạn."));
+            return (false, null, new FileError("too_many_units", ProcessingMessages.TooManyTranslations));
 
         var list = new List<string>(arrayElement.GetArrayLength());
         foreach (var element in arrayElement.EnumerateArray())
         {
             if (element.ValueKind != JsonValueKind.String)
-                return (false, null, new FileError("invalid_texts", "Mỗi phần tử texts phải là chuỗi và không được null."));
+                return (false, null, new FileError("invalid_texts", ProcessingMessages.InvalidTextElement));
 
             try
             {
@@ -119,7 +119,7 @@ internal static class TranslationInputParser
             }
             catch (Exception ex) when (ex is InvalidOperationException or FormatException or DecoderFallbackException)
             {
-                return (false, null, new FileError("invalid_json", "texts chứa chuỗi Unicode không hợp lệ."));
+                return (false, null, new FileError("invalid_json", ProcessingMessages.InvalidJsonUnicode));
             }
         }
 

@@ -119,6 +119,16 @@ public sealed class PlainTextServiceTests
     public async Task RejectsInvalidTranslationsWithLocations(string? translation, string code)
     {
         var result = await Export(Create(new() { MaxTranslationChars = 4 }), "A\r\n\r\nB\nC", "ok", translation!);
+        if (code == "empty_translation")
+        {
+            Assert.Empty(result.Errors);
+            Assert.Equal("ok\r\n\r\nB\nC", Encoding.UTF8.GetString(result.Content!));
+            var skipped = Assert.Single(result.Metadata.Skipped);
+            Assert.Equal(code, skipped.Code);
+            Assert.Equal(1, skipped.UnitIndex);
+            Assert.Equal(new SourceLineRange(3, 4), skipped.Location.Line);
+            return;
+        }
         Assert.Null(result.Content);
         var error = Assert.Single(result.Errors);
         Assert.Equal(code, error.Code);
@@ -135,8 +145,9 @@ public sealed class PlainTextServiceTests
     public async Task RejectsLoneSurrogatesWithoutThrowing()
     {
         var result = await Export(Create(), "A", "\ud800");
-        Assert.Null(result.Content);
-        Assert.Equal("invalid_translation", Assert.Single(result.Errors).Code);
+        Assert.Empty(result.Errors);
+        Assert.Equal("A", Encoding.UTF8.GetString(result.Content!));
+        Assert.Equal("invalid_translation", Assert.Single(result.Metadata.Skipped).Code);
     }
 
     /// <summary>

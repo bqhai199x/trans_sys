@@ -82,7 +82,7 @@ public sealed class OfficeProcessingOptions
     public int MaxCellTextChars { get; init; } = 32767;
 
     /// <summary>
-    /// Maximum allowed errors accumulated before early stopping.
+    /// Legacy diagnostic setting retained for configuration compatibility; recoverable skips are never truncated.
     /// </summary>
     public int MaxErrors { get; init; } = 100;
 

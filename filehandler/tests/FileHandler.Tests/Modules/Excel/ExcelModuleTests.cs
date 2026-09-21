@@ -41,10 +41,10 @@ public sealed class ExcelModuleTests
         var importResult = await service.ImportAsync(importStream);
 
         Assert.Empty(importResult.Errors);
-        Assert.Equal(new[] { "Alpha", "Beta", "Gamma", "Delta" }, importResult.Texts);
+        Assert.Equal(new[] { "Sheet1", "Alpha", "Beta", "Gamma", "Delta" }, importResult.Texts);
 
         using var exportStream = new MemoryStream(xlsx);
-        var exportResult = await service.ExportAsync(exportStream, new[] { "A1", "B1", "G1", "D1" });
+        var exportResult = await service.ExportAsync(exportStream, new[] { "Sheet1", "A1", "B1", "G1", "D1" });
 
         Assert.Empty(exportResult.Errors);
         Assert.NotNull(exportResult.Content);
@@ -71,12 +71,12 @@ public sealed class ExcelModuleTests
         var importResult = await service.ImportAsync(importStream);
 
         Assert.Empty(importResult.Errors);
-        Assert.Equal(4, importResult.Texts.Count);
-        Assert.Equal("SharedA", importResult.Texts[0]);
-        Assert.Equal("SharedB", importResult.Texts[1]);
+        Assert.Equal(5, importResult.Texts.Count);
+        Assert.Equal("SharedA", importResult.Texts[1]);
+        Assert.Equal("SharedB", importResult.Texts[2]);
 
         using var exportStream = new MemoryStream(xlsx);
-        var exportResult = await service.ExportAsync(exportStream, new[] { "T0", "T1", "T2", "T3" });
+        var exportResult = await service.ExportAsync(exportStream, new[] { "Sheet1", "T0", "T1", "T2", "T3" });
 
         Assert.Empty(exportResult.Errors);
         Assert.NotNull(exportResult.Content);
@@ -104,10 +104,10 @@ public sealed class ExcelModuleTests
         // "Sales" and "Count" are table headers -> PROTECTED (no units)
         // "7" is numeric -> no unit
         // "Item" is string data cell in row 2 -> extracted
-        Assert.Equal(new[] { "Item" }, importResult.Texts);
+        Assert.Equal(new[] { "Sheet1", "Item" }, importResult.Texts);
 
         using var exportStream = new MemoryStream(xlsx);
-        var exportResult = await service.ExportAsync(exportStream, new[] { "MatHang" });
+        var exportResult = await service.ExportAsync(exportStream, new[] { "Sheet1", "MatHang" });
 
         Assert.Empty(exportResult.Errors);
         Assert.NotNull(exportResult.Content);
@@ -186,10 +186,10 @@ public sealed class ExcelModuleTests
         var importResult = await service.ImportAsync(importStream);
 
         Assert.Empty(importResult.Errors);
-        Assert.Equal(new[] { "Text", "Merged" }, importResult.Texts);
+        Assert.Equal(new[] { "Sheet1", "Text", "Merged" }, importResult.Texts);
 
         using var exportStream = new MemoryStream(xlsx);
-        var exportResult = await service.ExportAsync(exportStream, new[] { "Text Translated", "Merged Translated" });
+        var exportResult = await service.ExportAsync(exportStream, new[] { "Sheet1", "Text Translated", "Merged Translated" });
 
         Assert.Empty(exportResult.Errors);
         Assert.NotNull(exportResult.Content);
@@ -214,7 +214,7 @@ public sealed class ExcelModuleTests
             new[] { new[] { 0 } });
 
         using var exportStream = new MemoryStream(xlsx);
-        var exportResult = await service.ExportAsync(exportStream, new[] { "Changed" });
+        var exportResult = await service.ExportAsync(exportStream, new[] { "Sheet1", "Changed" });
 
         Assert.Empty(exportResult.Errors);
         Assert.NotNull(exportResult.Content);

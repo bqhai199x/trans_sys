@@ -32,11 +32,13 @@ public sealed class OfficePackageValidator
     /// <param name="source">Source document snapshot.</param>
     /// <param name="selectedPartUris">List of part URIs selected for translation.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="skipped">Precisely located preserved source regions.</param>
     /// <returns>Validation result indicating source validity.</returns>
     public OfficeValidationResult ValidateSource(
         OfficeSource source,
         IReadOnlyList<string> selectedPartUris,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<SkipMetadata>? skipped = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -59,16 +61,16 @@ public sealed class OfficePackageValidator
         }
         var fatalErrors = new List<FileError>();
         if (errors.Count > _options.MaxSchemaErrors)
-            return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", "Vượt giới hạn kiểm tra schema.")]);
+            return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", ProcessingMessages.SchemaValidationLimit)]);
 
         foreach (var error in errors)
         {
             var partUri = error.Part?.Uri?.ToString() ?? string.Empty;
             var isSelected = selectedSet.Contains(partUri) || string.IsNullOrEmpty(partUri) || error.Part is WorkbookPart or PresentationPart or SharedStringTablePart;
 
-            if (isSelected)
+            if (isSelected && !IsPreserved(error, skipped))
             {
-                fatalErrors.Add(new FileError("invalid_office_package", $"Lỗi schema trong phần bắt buộc ({partUri}): {error.Description}"));
+                fatalErrors.Add(new FileError("invalid_office_package", ProcessingMessages.SourceSchemaError(partUri, error.Description)));
             }
         }
 
@@ -87,12 +89,14 @@ public sealed class OfficePackageValidator
     /// <param name="output">Generated output document payload.</param>
     /// <param name="masks">Allowed modification masks per touched part.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="skipped">Precisely located preserved source regions.</param>
     /// <returns>Validation result for output.</returns>
     public OfficeValidationResult ValidateOutput(
         OfficeSource source,
         OfficeOutput output,
         IReadOnlyDictionary<string, OfficeEditMask> masks,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IReadOnlyList<SkipMetadata>? skipped = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
@@ -103,13 +107,13 @@ public sealed class OfficePackageValidator
         using var originalPackage = OpenPackageReadOnly(source.OriginalBytes, source.Format);
         var baseline = validator.Validate(originalPackage, cancellationToken).Take(_options.MaxSchemaErrors + 1).ToList();
         if (baseline.Count > _options.MaxSchemaErrors)
-            return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", "Vượt giới hạn kiểm tra schema.")]);
+            return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", ProcessingMessages.SchemaValidationLimit)]);
         var baselineCounts = baseline.GroupBy(ErrorKey).ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
 
         var touchedSet = new HashSet<string>(masks.Keys, StringComparer.OrdinalIgnoreCase);
         var fatalErrors = new List<FileError>();
         if (errors.Count > _options.MaxSchemaErrors)
-            return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", "Vượt giới hạn kiểm tra schema.")]);
+            return OfficeValidationResult.Failure([new FileError("office_schema_limit_exceeded", ProcessingMessages.SchemaValidationLimit)]);
 
         foreach (var error in errors)
         {
@@ -117,9 +121,9 @@ public sealed class OfficePackageValidator
             var key = ErrorKey(error);
             baselineCounts.TryGetValue(key, out var remaining);
             if (remaining > 0) baselineCounts[key] = remaining - 1;
-            if (remaining == 0 || touchedSet.Contains(partUri) || string.IsNullOrEmpty(partUri))
+            if (remaining == 0 || touchedSet.Contains(partUri) && !IsPreserved(error, skipped) || string.IsNullOrEmpty(partUri))
             {
-                fatalErrors.Add(new FileError("office_output_invalid", $"Lỗi schema trong tệp đầu ra ({partUri}): {error.Description}"));
+                fatalErrors.Add(new FileError("office_output_invalid", ProcessingMessages.OutputSchemaError(partUri, error.Description)));
             }
         }
 
@@ -132,7 +136,7 @@ public sealed class OfficePackageValidator
 
         if (sourceEntries.Count != outputEntries.Count)
         {
-            fatalErrors.Add(new FileError("office_output_invalid", $"Số lượng phần tử trong gói đầu ra ({outputEntries.Count}) không khớp với gói nguồn ({sourceEntries.Count})."));
+            fatalErrors.Add(new FileError("office_output_invalid", ProcessingMessages.OutputEntryCountMismatch(outputEntries.Count, sourceEntries.Count)));
         }
 
         foreach (var (uri, sourceEntry) in sourceEntries)
@@ -140,12 +144,12 @@ public sealed class OfficePackageValidator
             cancellationToken.ThrowIfCancellationRequested();
             if (!outputEntries.TryGetValue(uri, out var outputEntry))
             {
-                fatalErrors.Add(new FileError("office_output_invalid", $"Phần tử {uri} bị thiếu trong gói đầu ra."));
+                fatalErrors.Add(new FileError("office_output_invalid", ProcessingMessages.MissingOutputPart(uri)));
                 continue;
             }
 
             if (touchedSet.Contains(uri) && !OfficeXmlInvariant.Matches(sourceEntry, outputEntry, masks[uri], _options))
-                fatalErrors.Add(new FileError("office_output_invalid", "Cấu trúc XML ngoài vùng dịch đã thay đổi."));
+                fatalErrors.Add(new FileError("office_output_invalid", ProcessingMessages.ProtectedXmlChanged));
 
             if (!touchedSet.Contains(uri))
             {
@@ -154,7 +158,7 @@ public sealed class OfficePackageValidator
                 using var outputPayload = outputEntry.Open();
                 if (!SHA256.HashData(sourcePayload).AsSpan().SequenceEqual(SHA256.HashData(outputPayload)))
                 {
-                    fatalErrors.Add(new FileError("office_output_invalid", $"Phần tử không chạm {uri} bị biến đổi dữ liệu (CRC-32 mismatch)."));
+                    fatalErrors.Add(new FileError("office_output_invalid", ProcessingMessages.UntouchedPartChanged(uri)));
                 }
             }
         }
@@ -165,6 +169,27 @@ public sealed class OfficePackageValidator
         }
 
         return OfficeValidationResult.Success();
+    }
+
+    /// <summary>
+    /// Matches schema findings only inside explicitly preserved extraction subtrees.
+    /// </summary>
+    /// <param name="error">Located schema finding.</param>
+    /// <param name="skipped">Request-local source exclusions.</param>
+    /// <returns>True for a finding within an identified unchanged region.</returns>
+    private static bool IsPreserved(ValidationErrorInfo error, IReadOnlyList<SkipMetadata>? skipped)
+    {
+        if (skipped is null || error.Node is not { } node || error.Part is null) return false;
+        var root = node;
+        while (root.Parent is not null) root = root.Parent;
+        var location = OfficeMetadata.Location(new(error.Part.Uri.ToString(), OfficeTextBindings.Path(node))
+        {
+            Root = new(root.NamespaceUri, root.LocalName, 1)
+        });
+        var cell = node as DocumentFormat.OpenXml.Spreadsheet.Cell ?? node.Ancestors<DocumentFormat.OpenXml.Spreadsheet.Cell>().FirstOrDefault();
+        return location.Path is not null && skipped.Any(s => s.Stage == SkipStage.Extraction && s.Location.PartUri == location.PartUri &&
+            (s.Location.Path is { } path && (location.Path == path || location.Path.StartsWith(path + "/", StringComparison.Ordinal)) ||
+             s.Scope == SkipScope.Cell && s.Location.CellReference is { } cellReference && cell?.CellReference?.Value == cellReference));
     }
 
     /// <summary>

@@ -30,7 +30,7 @@ public sealed class ExcelStructureValidator
         using var doc = SpreadsheetDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
 
         if (doc.WorkbookPart?.Workbook?.Sheets is null)
-            return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Sổ tính Excel đầu ra thiếu phần bảng tính.")]);
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", ProcessingMessages.MissingOutputWorkbook)]);
 
         var tables = new Dictionary<(string Part, string Name), S.Table>();
         foreach (var worksheet in doc.WorkbookPart.WorksheetParts)

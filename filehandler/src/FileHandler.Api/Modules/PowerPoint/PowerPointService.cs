@@ -8,7 +8,7 @@ namespace FileHandler.Api.Modules.PowerPoint;
 /// <summary>
 /// Handles PowerPoint presentation (.pptx) imports and exports.
 /// </summary>
-public sealed class PowerPointService : IFileHandler
+public sealed class PowerPointService : ISelectableFileHandler<PowerPointSelection>
 {
 
     /// <summary>
@@ -101,59 +101,104 @@ public sealed class PowerPointService : IFileHandler
     /// <param name="stream">Caller-owned source stream.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Task containing units or validation errors.</returns>
-    public async Task<ImportResult> ImportAsync(Stream stream, CancellationToken cancellationToken = default)
+    public Task<ImportResult> ImportAsync(Stream stream, CancellationToken cancellationToken = default) =>
+        ImportAsync(stream, new PowerPointSelection(null), cancellationToken);
+
+    /// <summary>
+    /// Processes explicitly selected native source objects.
+    /// </summary>
+    /// <param name="stream">Caller-owned source stream.</param>
+    /// <param name="selection">Native object selection.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Processing result with complete collected metadata.</returns>
+    public Task<ImportResult> ImportAsync(Stream stream, PowerPointSelection selection, CancellationToken cancellationToken) =>
+        ImportAsync(stream, selection, false, cancellationToken);
+
+    /// <summary>
+    /// Imports default visible objects with optional diagnostic mapping.
+    /// </summary>
+    /// <param name="stream">Caller-owned readable source stream.</param>
+    /// <param name="debug">Whether to return informational skips and build diagnostic unit mapping.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Texts, skips and optional public unit mapping, or fatal errors.</returns>
+    public Task<ImportResult> ImportAsync(Stream stream, bool debug, CancellationToken cancellationToken) =>
+        ImportAsync(stream, new PowerPointSelection(null), debug, cancellationToken);
+
+    /// <summary>
+    /// Imports selected objects while constructing public unit metadata only when requested.
+    /// </summary>
+    /// <param name="stream">Caller-owned readable source stream.</param>
+    /// <param name="selection">Native object selection.</param>
+    /// <param name="debug">Whether to return informational skips and build diagnostic unit mapping.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Texts, skips and optional public unit mapping, or fatal errors.</returns>
+    public async Task<ImportResult> ImportAsync(Stream stream, PowerPointSelection selection, bool debug, CancellationToken cancellationToken)
     {
+        var result = await ImportCoreAsync(stream, selection, debug, cancellationToken).ConfigureAwait(false);
+        return result with { Metadata = result.Metadata.ForResponse(debug) };
+    }
+
+    /// <summary>
+    /// Runs import with complete internal skip facts for preservation validation.
+    /// </summary>
+    /// <param name="stream">Caller-owned source stream.</param>
+    /// <param name="selection">Native object selection.</param>
+    /// <param name="debug">Whether to construct diagnostic unit mapping.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Processing result before public skip projection.</returns>
+    private async Task<ImportResult> ImportCoreAsync(Stream stream, PowerPointSelection selection, bool debug, CancellationToken cancellationToken)
+    {
+        var metadata = FileMetadata.Create("powerpoint");
         try
         {
             var readResult = await _reader.ReadAsync(new LimitedReadStream(stream, _fileHandlingOptions.MaxFileBytes, "file_too_large"), OfficeFormat.PowerPoint, cancellationToken).ConfigureAwait(false);
             if (readResult.Errors.Count > 0 || readResult.Source is null)
             {
-                return new([], readResult.Errors);
+                return new([], readResult.Errors) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
             }
 
             using var source = readResult.Source;
             if (source.OriginalBytes.Length > _fileHandlingOptions.MaxFileBytes)
             {
-                var err = new FileError("file_too_large", $"Kích thước tệp ({source.OriginalBytes.Length} bytes) vượt quá giới hạn ({_fileHandlingOptions.MaxFileBytes} bytes).");
-                return new([], [err]);
+                var err = new FileError("file_too_large", ProcessingMessages.FileSizeLimit(source.OriginalBytes.Length, _fileHandlingOptions.MaxFileBytes));
+                return new([], [err]) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
             }
 
             var inventory = _inspector.Inspect(source, cancellationToken);
 
             PowerPointPlan plan;
-            try
-            {
-                plan = _extractor.Analyze(source, inventory, cancellationToken);
-            }
-            catch (InvalidOperationException ex) when (ex is not FileLimitException)
-            {
-                var err = new FileError("office_unsupported_content", ex.Message);
-                return new([], [err]);
-            }
+            try { plan = _extractor.Analyze(source, inventory, selection, cancellationToken); }
+            finally { metadata = source.ProcessingMetadata ?? metadata; }
 
+            metadata = plan.Metadata;
             if (plan.Units.Count > _fileHandlingOptions.MaxUnits)
             {
-                var err = new FileError("too_many_units", $"Số lượng đơn vị dịch ({plan.Units.Count}) vượt quá giới hạn ({_fileHandlingOptions.MaxUnits}).");
-                return new([], [err]);
+                var err = new FileError("too_many_units", ProcessingMessages.UnitCountLimit(plan.Units.Count, _fileHandlingOptions.MaxUnits));
+                return new([], [err]) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
             }
 
-            var selectedPartUris = plan.Slides.Where(s => s.Show).Select(s => s.PartUri).ToList();
-            var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken);
+            var selectedPartUris = metadata.Slides!.Where(s => s.Selected == true).Select(s => s.PartUri).ToList();
+            var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken, metadata.Skipped);
             if (!sourceValidation.IsValid)
             {
-                return new([], sourceValidation.Errors);
+                return new([], sourceValidation.Errors) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
             }
 
+            if (debug) metadata = OfficeMetadata.WithUnits(metadata, plan.Units, cancellationToken);
             var texts = plan.Units.Select(u => u.EncodedSource).ToArray();
-            return new(texts, []);
+            return new(texts, []) { Metadata = metadata };
         }
-        catch (InvalidDataException)
+        catch (UnknownSelectionException ex)
         {
-            return new([], [new FileError("invalid_office_package", "Cấu trúc gói Office không hợp lệ.")]);
+            return new([], [new("unknown_selection_id", ex.Message)]) { Metadata = ex.Metadata with { Status = ProcessingStatus.Failed } };
+        }
+        catch (Exception ex) when (ex is InvalidDataException or System.Xml.XmlException or OpenXmlPackageException or FormatException or OverflowException)
+        {
+            return new([], [new FileError("invalid_office_package", ProcessingMessages.InvalidOfficePackage)]) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
         }
         catch (FileLimitException ex)
         {
-            return new([], [new FileError(ex.Code, ex.Message)]);
+            return new([], [new FileError(ex.Code, ex.Message)]) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
         }
     }
 
@@ -164,73 +209,86 @@ public sealed class PowerPointService : IFileHandler
     /// <param name="translations">Ordered caller translations.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Task containing output bytes or validation errors.</returns>
-    public async Task<ExportResult> ExportAsync(Stream stream, IReadOnlyList<string> translations, CancellationToken cancellationToken = default)
+    public Task<ExportResult> ExportAsync(Stream stream, IReadOnlyList<string> translations, CancellationToken cancellationToken = default) =>
+        ExportAsync(stream, translations, new PowerPointSelection(null), cancellationToken);
+
+    /// <summary>
+    /// Processes explicitly selected native source objects.
+    /// </summary>
+    /// <param name="stream">Caller-owned source stream.</param>
+    /// <param name="translations">Translations in selected source order.</param>
+    /// <param name="selection">Native object selection.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Processing result with complete collected metadata.</returns>
+    public async Task<ExportResult> ExportAsync(Stream stream, IReadOnlyList<string> translations, PowerPointSelection selection, CancellationToken cancellationToken)
     {
+        var result = await ExportCoreAsync(stream, translations, selection, cancellationToken).ConfigureAwait(false);
+        return result with { Metadata = result.Metadata.ForResponse(false) };
+    }
+
+    /// <summary>
+    /// Runs export with complete internal skip facts for preservation validation.
+    /// </summary>
+    /// <param name="stream">Caller-owned source stream.</param>
+    /// <param name="translations">Translations in source mapping order.</param>
+    /// <param name="selection">Native object selection.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Processing result before public skip projection.</returns>
+    private async Task<ExportResult> ExportCoreAsync(Stream stream, IReadOnlyList<string> translations, PowerPointSelection selection, CancellationToken cancellationToken)
+    {
+        var metadata = FileMetadata.Create("powerpoint");
         try
         {
             var readResult = await _reader.ReadAsync(new LimitedReadStream(stream, _fileHandlingOptions.MaxFileBytes, "file_too_large"), OfficeFormat.PowerPoint, cancellationToken).ConfigureAwait(false);
             if (readResult.Errors.Count > 0 || readResult.Source is null)
             {
-                return new(null, ContentType, readResult.Errors);
+                return new(null, ContentType, readResult.Errors) { Metadata = metadata.ForExport(true) };
             }
 
             using var source = readResult.Source;
             if (source.OriginalBytes.Length > _fileHandlingOptions.MaxFileBytes)
             {
-                var err = new FileError("file_too_large", $"Kích thước tệp ({source.OriginalBytes.Length} bytes) vượt quá giới hạn ({_fileHandlingOptions.MaxFileBytes} bytes).");
-                return new(null, ContentType, [err]);
+                var err = new FileError("file_too_large", ProcessingMessages.FileSizeLimit(source.OriginalBytes.Length, _fileHandlingOptions.MaxFileBytes));
+                return new(null, ContentType, [err]) { Metadata = metadata.ForExport(true) };
             }
 
             var inventory = _inspector.Inspect(source, cancellationToken);
 
             PowerPointPlan plan;
-            try
-            {
-                plan = _extractor.Analyze(source, inventory, cancellationToken);
-            }
-            catch (InvalidOperationException ex) when (ex is not FileLimitException)
-            {
-                var err = new FileError("office_unsupported_content", ex.Message);
-                return new(null, ContentType, [err]);
-            }
+            try { plan = _extractor.Analyze(source, inventory, selection, cancellationToken); }
+            finally { metadata = source.ProcessingMetadata ?? metadata; }
 
+            metadata = plan.Metadata;
             if (plan.Units.Count > _fileHandlingOptions.MaxUnits)
                 throw new FileLimitException("too_many_units");
 
-            var selectedPartUris = plan.Slides.Where(s => s.Show).Select(s => s.PartUri).ToList();
-            var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken);
+            var selectedPartUris = metadata.Slides!.Where(s => s.Selected == true).Select(s => s.PartUri).ToList();
+            var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken, metadata.Skipped);
             if (!sourceValidation.IsValid)
             {
-                return new(null, ContentType, sourceValidation.Errors);
+                return new(null, ContentType, sourceValidation.Errors) { Metadata = metadata.ForExport(true) };
             }
 
             var decodeResult = _codec.ValidateAndDecode(plan.Units, translations, OfficeFormat.PowerPoint, cancellationToken);
             if (decodeResult.Errors.Count > 0 || decodeResult.DecodedUnits is null)
             {
-                return new(null, ContentType, decodeResult.Errors);
+                return new(null, ContentType, decodeResult.Errors) { Metadata = metadata.ForExport(true) };
             }
 
+            metadata = (metadata with { Skipped = metadata.Skipped.Concat(decodeResult.Skipped).ToArray() }).ForExport();
             var patch = _applier.Prepare(plan, decodeResult.DecodedUnits, cancellationToken);
 
-            var isIdentity = true;
-            for (var i = 0; i < plan.Units.Count; i++)
-            {
-                if (!string.Equals(plan.Units[i].EncodedSource, translations[i], StringComparison.Ordinal))
-                {
-                    isIdentity = false;
-                    break;
-                }
-            }
+            var isIdentity = patch.EditMasks.Count == 0;
 
             if (isIdentity)
             {
                 if (source.OriginalBytes.Length > _fileHandlingOptions.MaxOutputBytes)
                 {
-                    var err = new FileError("output_too_large", "Kích thước tệp vượt quá giới hạn đầu ra cho phép.");
-                    return new(null, ContentType, [err]);
+                    var err = new FileError("output_too_large", ProcessingMessages.OutputSizeLimit);
+                    return new(null, ContentType, [err]) { Metadata = metadata.ForExport(true) };
                 }
 
-                return new(source.OriginalBytes, ContentType, []);
+                return new(source.OriginalBytes, ContentType, []) { Metadata = metadata };
             }
 
             using var session = OfficeExportSession.Create(source, _options, _fileHandlingOptions);
@@ -243,31 +301,64 @@ public sealed class PowerPointService : IFileHandler
             var output = await session.FinalizeAsync(cancellationToken).ConfigureAwait(false);
             if (output.OutputBytes > _fileHandlingOptions.MaxOutputBytes)
             {
-                var err = new FileError("output_too_large", "Kích thước tệp vượt quá giới hạn đầu ra cho phép.");
-                return new(null, ContentType, [err]);
+                var err = new FileError("output_too_large", ProcessingMessages.OutputSizeLimit);
+                return new(null, ContentType, [err]) { Metadata = metadata.ForExport(true) };
             }
 
-            var outputValidation = _packageValidator.ValidateOutput(source, output, patch.EditMasks, cancellationToken);
+            var outputValidation = _packageValidator.ValidateOutput(source, output, patch.EditMasks, cancellationToken, metadata.Skipped);
             if (!outputValidation.IsValid)
             {
-                return new(null, ContentType, outputValidation.Errors);
+                return new(null, ContentType, outputValidation.Errors) { Metadata = metadata.ForExport(true) };
             }
 
             var structureValidation = _structureValidator.Validate(output.Content, plan, cancellationToken);
             if (!structureValidation.IsValid)
             {
-                return new(null, ContentType, structureValidation.Errors);
+                return new(null, ContentType, structureValidation.Errors) { Metadata = metadata.ForExport(true) };
             }
 
-            return new(output.Content, ContentType, []);
+            return new(output.Content, ContentType, []) { Metadata = metadata };
         }
-        catch (InvalidDataException)
+        catch (UnknownSelectionException ex)
         {
-            return new(null, ContentType, [new FileError("invalid_office_package", "Cấu trúc gói Office không hợp lệ.")]);
+            return new(null, ContentType, [new("unknown_selection_id", ex.Message)]) { Metadata = ex.Metadata.ForExport(true) };
+        }
+        catch (Exception ex) when (ex is InvalidDataException or System.Xml.XmlException or OpenXmlPackageException or FormatException or OverflowException)
+        {
+            return new(null, ContentType, [new FileError("invalid_office_package", ProcessingMessages.InvalidOfficePackage)]) { Metadata = metadata.ForExport(true) };
         }
         catch (FileLimitException ex)
         {
-            return new(null, ContentType, [new FileError(ex.Code, ex.Message)]);
+            return new(null, ContentType, [new FileError(ex.Code, ex.Message)]) { Metadata = metadata.ForExport(true) };
+        }
+    }
+
+    /// <summary>
+    /// Reads native inventory without extracting translation units.
+    /// </summary>
+    /// <param name="stream">Caller-owned upload stream.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Inventory or fatal source errors.</returns>
+    public async Task<SlidesResponse> GetSlidesAsync(Stream stream, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            var read = await _reader.ReadAsync(new LimitedReadStream(stream, _fileHandlingOptions.MaxFileBytes, "file_too_large"), OfficeFormat.PowerPoint, cancellationToken);
+            if (read.Source is null || read.Errors.Count > 0)
+                return new([], new("powerpoint", ProcessingStatus.Failed, []), read.Errors);
+            using var source = read.Source;
+            using var bytes = new MemoryStream(source.OriginalBytes);
+            using var document = PresentationDocument.Open(bytes, false, OfficeTextBindings.Settings(_options));
+            var items = OfficeCatalog.Slides(document, cancellationToken);
+            return new(items, new("powerpoint", ProcessingStatus.Success, []), []);
+        }
+        catch (FileLimitException ex)
+        {
+            return new([], new("powerpoint", ProcessingStatus.Failed, []), [new(ex.Code, ex.Message)]);
+        }
+        catch (Exception ex) when (ex is InvalidDataException or System.Xml.XmlException or OpenXmlPackageException or FormatException or OverflowException)
+        {
+            return new([], new("powerpoint", ProcessingStatus.Failed, []), [new("invalid_office_package", ProcessingMessages.InvalidOfficePackage)]);
         }
     }
 

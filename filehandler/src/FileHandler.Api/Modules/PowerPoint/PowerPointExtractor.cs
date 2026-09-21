@@ -51,17 +51,34 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
     /// <param name="inventory">Preflight package inventory.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Extraction plan.</returns>
-    public PowerPointPlan Analyze(OfficeSource source, OfficeInventory inventory, CancellationToken cancellationToken)
+    public PowerPointPlan Analyze(OfficeSource source, OfficeInventory inventory, CancellationToken cancellationToken) =>
+        Analyze(source, inventory, new PowerPointSelection(null), cancellationToken);
+
+    /// <summary>
+    /// Extracts selected source regions while recording preserved exclusions.
+    /// </summary>
+    /// <param name="source">Source snapshot.</param>
+    /// <param name="inventory">Preflight inventory.</param>
+    /// <param name="selection">Native identifiers to select.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Source mapping, inventory and exclusions.</returns>
+    public PowerPointPlan Analyze(OfficeSource source, OfficeInventory inventory, PowerPointSelection selection, CancellationToken cancellationToken)
     {
         using var ms = new MemoryStream(source.OriginalBytes);
         using var doc = PresentationDocument.Open(ms, false, OfficeTextBindings.Settings(_options));
 
         if (doc.PresentationPart?.Presentation?.SlideIdList is null)
-            throw new InvalidOperationException("PowerPoint package missing presentation or slide list.");
+            throw new InvalidDataException("PowerPoint package missing presentation or slide list.");
 
         var units = new OfficeUnitCollection(_options, _codec.MaxUnits);
         var slides = new List<PowerPointSlideSnapshot>();
 
+        var catalog = OfficeCatalog.Slides(doc, cancellationToken).ToArray();
+        var selectedIds = selection.SlideIds?.ToHashSet(StringComparer.Ordinal);
+        if (selectedIds is not null && selectedIds.Except(catalog.Select(s => s.SlideId)).Any())
+            throw new UnknownSelectionException(FileMetadata.Create("powerpoint") with { Slides = catalog });
+        var skipped = new List<SkipMetadata>();
+        source.ProcessingMetadata = FileMetadata.Create("powerpoint") with { Slides = catalog, Skipped = skipped };
         var slideIndex = 0;
 
         foreach (var slideId in doc.PresentationPart.Presentation.SlideIdList.Elements<SlideId>())
@@ -69,7 +86,11 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
             cancellationToken.ThrowIfCancellationRequested();
             slideIndex++;
 
-            var idVal = slideId.Id?.Value.ToString() ?? slideIndex.ToString();
+            var descriptor = catalog[slideIndex - 1];
+            var selected = selectedIds?.Contains(descriptor.SlideId) ?? !descriptor.Hidden;
+            descriptor = descriptor with { Selected = selected };
+            catalog[slideIndex - 1] = descriptor;
+            var idVal = descriptor.SlideId;
             var relId = slideId.RelationshipId?.Value;
 
             if (string.IsNullOrEmpty(relId) || !doc.PresentationPart.TryGetPartById(relId, out var part) || part is not SlidePart slidePart)
@@ -80,20 +101,17 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
             var shapeTree = slidePart.Slide?.CommonSlideData?.ShapeTree;
             var shapeCount = shapeTree?.Descendants<P.Shape>().Count() ?? 0;
 
-            if (isHidden || shapeTree is null)
+            if (!selected || shapeTree is null)
             {
+                skipped.Add(new(SkipCodes.SlideNotSelected, SkipSeverity.Info, SkipStage.Selection, SkipScope.Slide, 1, ProcessingMessages.SlideNotSelected, new(PartUri: slideUri, SlideId: idVal)));
                 slides.Add(new PowerPointSlideSnapshot(idVal, slideUri, !isHidden, shapeCount));
                 continue;
             }
 
-            // Check for charts or diagrams on this visible slide
-            if (slidePart.ChartParts.Any() || slidePart.DiagramDataParts.Any())
-            {
-                throw new InvalidOperationException("Slide contains Chart or SmartArt diagrams which are not supported for translation in office-v1.");
-            }
-
-            WalkShapeTree(shapeTree, slideUri, idVal, units, cancellationToken);
-            slides.Add(new PowerPointSlideSnapshot(idVal, slideUri, true, shapeCount));
+            var before = units.Count;
+            WalkShapeTree(shapeTree, slideUri, idVal, units, skipped, cancellationToken);
+            catalog[slideIndex - 1] = descriptor with { UnitStartIndex = before, UnitEndIndex = units.Count };
+            slides.Add(new PowerPointSlideSnapshot(idVal, slideUri, !isHidden, shapeCount));
         }
 
         long totalPlanChars = 0;
@@ -106,7 +124,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
         if (units.Count > _options.MaxObjects || units.Any(u => u.Slots.Count + u.Anchors.Count > _options.MaxTokensPerUnit))
             throw new FileLimitException("office_plan_limit_exceeded");
 
-        return new PowerPointPlan(source.SourceHash, units, slides);
+        return new PowerPointPlan(source.SourceHash, units, slides) { Metadata = OfficeMetadata.Describe("powerpoint", units) with { Slides = catalog, Skipped = skipped, Status = ProcessingStatus.Resolve(skipped) } };
     }
 
     /// <summary>
@@ -116,6 +134,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
     /// <param name="slideUri">Canonical slide part URI.</param>
     /// <param name="slideId">Slide identifier string.</param>
     /// <param name="units">Accumulated units collection.</param>
+    /// <param name="skipped">Preserved source regions.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>No return value.</returns>
     private void WalkShapeTree(
@@ -123,6 +142,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
         string slideUri,
         string slideId,
         OfficeUnitCollection units,
+        List<SkipMetadata> skipped,
         CancellationToken cancellationToken)
     {
         var shapeOrdinal = 0;
@@ -164,7 +184,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
                             units.Count,
                             unitId,
                             unitId,
-                            shapeLoc,
+                            OfficeMetadata.At(shapeLoc, p),
                             template.Mode,
                             _codec.Encode(template),
                             template.Slots,
@@ -178,7 +198,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
             }
             else if (child is P.GroupShape grp)
             {
-                WalkShapeTree(grp, slideUri, slideId, units, cancellationToken);
+                WalkShapeTree(grp, slideUri, slideId, units, skipped, cancellationToken);
             }
             else if (child is P.GraphicFrame gf)
             {
@@ -188,11 +208,11 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
                 if (table is not null)
                 {
                     var tableLoc = new OfficeLocation(slideUri, Array.Empty<OfficeElementPathSegment>(), SlideId: slideId, ShapeId: gfId);
-                    _tableReader.ReadTable(table, tableLoc, units, _codec, _options);
+                    _tableReader.ReadTable(table, tableLoc, units, _codec, _options, skipped);
                 }
-                else if (gf.Descendants<A.GraphicData>().Any(gd => gd.Uri?.Value?.Contains("chart") == true || gd.Uri?.Value?.Contains("diagram") == true))
+                else
                 {
-                    throw new InvalidOperationException("GraphicFrame contains Chart or Diagram which is not supported in office-v1.");
+                    skipped.Add(new(SkipCodes.UnsupportedGraphicFrame, SkipSeverity.Warning, SkipStage.Extraction, SkipScope.Shape, 1, ProcessingMessages.UnsupportedGraphicFrame, OfficeMetadata.Location(OfficeMetadata.At(new(slideUri, [], SlideId: slideId, ShapeId: gfId), gf))));
                 }
             }
         }

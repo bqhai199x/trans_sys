@@ -52,17 +52,17 @@ public sealed class MarkdownServiceTests
     }
 
     /// <summary>
-    /// Verifies that missing markers prevent exported content.
+    /// Verifies missing markers retain exact source bytes and report skip.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
-    public async Task MissingMarkerReturnsNoContent()
+    public async Task MissingMarkerPreservesSource()
     {
         var source = Encoding.UTF8.GetBytes("Hello **world**.");
         var service = Create();
         var result = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>Xin chào </ox:r0><ox:r1>thế giới."]);
-        Assert.Null(result.Content);
-        Assert.Contains(result.Errors, e => e.Code == "invalid_marker_syntax");
+        Assert.Equal(source, result.Content);
+        Assert.Contains(result.Metadata.Skipped, e => e.Code == "invalid_marker_syntax");
     }
 
     /// <summary>

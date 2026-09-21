@@ -68,15 +68,15 @@ public sealed class OfficePackageReader
             var bytes = ms.ToArray();
 
             if (bytes.Length < 4)
-                return OfficeReadResult.Failure([new FileError("invalid_office_package", "Kích thước tệp không hợp lệ.")]);
+                return OfficeReadResult.Failure([new FileError("invalid_office_package", ProcessingMessages.InvalidFileSize)]);
 
             // Check for OLE compound document magic: D0 CF 11 E0 A1 B1 1A E1
             if (bytes.Length >= 8 && bytes[0] == 0xD0 && bytes[1] == 0xCF && bytes[2] == 0x11 && bytes[3] == 0xE0)
-                return OfficeReadResult.Failure([new FileError("office_unsupported_content", "Định dạng nhị phân cũ (OLE) hoặc mã hóa không được hỗ trợ.")]);
+                return OfficeReadResult.Failure([new FileError("office_unsupported_content", ProcessingMessages.UnsupportedOlePackage)]);
 
             // Check ZIP magic: PK\x03\x04
             if (bytes[0] != 0x50 || bytes[1] != 0x4B || (bytes[2] != 0x03 && bytes[2] != 0x05 && bytes[2] != 0x07))
-                return OfficeReadResult.Failure([new FileError("invalid_office_package", "Tệp không phải là định dạng nén ZIP hợp lệ.")]);
+                return OfficeReadResult.Failure([new FileError("invalid_office_package", ProcessingMessages.InvalidZipFormat)]);
 
             var sourceHash = Convert.ToHexStringLower(SHA256.HashData(bytes));
 
@@ -87,13 +87,13 @@ public sealed class OfficePackageReader
             }
             catch (Exception)
             {
-                return OfficeReadResult.Failure([new FileError("invalid_office_package", "Tệp ZIP bị hỏng hoặc không mở được.")]);
+                return OfficeReadResult.Failure([new FileError("invalid_office_package", ProcessingMessages.UnreadableZip)]);
             }
 
             using (zip)
             {
                 if (zip.Entries.Count > _options.MaxPackageEntries)
-                    return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", $"Số lượng tệp trong gói ({zip.Entries.Count}) vượt quá giới hạn ({_options.MaxPackageEntries}).")]);
+                    return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", ProcessingMessages.PackageEntryLimit(zip.Entries.Count, _options.MaxPackageEntries))]);
 
                 byte[]? contentTypesBytes = null;
                 var normalizedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -121,14 +121,14 @@ public sealed class OfficePackageReader
 
                     var normalized = rawName.Replace('\\', '/').TrimStart('/');
                     if (!normalizedPaths.Add(normalized))
-                        return OfficeReadResult.Failure([new FileError("invalid_office_package", $"Trùng lặp đường dẫn tệp con trong gói: {normalized}.")]);
+                        return OfficeReadResult.Failure([new FileError("invalid_office_package", ProcessingMessages.DuplicatePackageEntry(normalized))]);
 
                     if (entry.Length > _options.MaxPartBytes)
-                        return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", $"Kích thước phần ({entry.Length} bytes) vượt quá giới hạn phần ({_options.MaxPartBytes} bytes).")]);
+                        return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", ProcessingMessages.PartSizeLimit(entry.Length, _options.MaxPartBytes))]);
 
                     totalExpandedBytes += entry.Length;
                     if (totalExpandedBytes > _options.MaxExpandedBytes)
-                        return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", $"Tổng kích thước giải nén ({totalExpandedBytes} bytes) vượt quá giới hạn ({_options.MaxExpandedBytes} bytes).")]);
+                        return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", ProcessingMessages.ExpandedSizeLimit(totalExpandedBytes, _options.MaxExpandedBytes))]);
 
                     var retain = string.Equals(normalized, "[Content_Types].xml", StringComparison.OrdinalIgnoreCase);
                     try
@@ -161,10 +161,10 @@ public sealed class OfficePackageReader
                 }
 
                 if (!hasContentTypes || !hasRootRels)
-                    return OfficeReadResult.Failure([new FileError("invalid_office_package", "Thiếu thành phần bắt buộc [Content_Types].xml hoặc _rels/.rels trong gói.")]);
+                    return OfficeReadResult.Failure([new FileError("invalid_office_package", ProcessingMessages.MissingPackageManifest)]);
 
                 if (hasDigitalSignature)
-                    return OfficeReadResult.Failure([new FileError("office_unsupported_content", "Gói chứa chữ ký số (digital signature) không được hỗ trợ chỉnh sửa.")]);
+                    return OfficeReadResult.Failure([new FileError("office_unsupported_content", ProcessingMessages.SignedPackageUnsupported)]);
 
                 long totalXmlNodes = 0;
                 long totalXmlElements = 0;
@@ -198,7 +198,7 @@ public sealed class OfficePackageReader
                 }
                 catch (XmlException)
                 {
-                    return OfficeReadResult.Failure([new FileError("invalid_office_package", "Content types XML không hợp lệ.")]);
+                    return OfficeReadResult.Failure([new FileError("invalid_office_package", ProcessingMessages.InvalidContentTypes)]);
                 }
 
                 foreach (var entry in zip.Entries)
@@ -225,10 +225,10 @@ public sealed class OfficePackageReader
                                 maxDepth = xmlReader.Depth;
 
                             if (maxDepth > _options.MaxXmlDepth)
-                                return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", $"Độ sâu XML ({maxDepth}) vượt quá giới hạn ({_options.MaxXmlDepth}).")]);
+                                return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", ProcessingMessages.XmlDepthLimit(maxDepth, _options.MaxXmlDepth))]);
 
                             if (totalXmlNodes > _options.MaxXmlNodes)
-                                return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", $"Tổng số nút XML ({totalXmlNodes}) vượt quá giới hạn ({_options.MaxXmlNodes}).")]);
+                                return OfficeReadResult.Failure([new FileError("office_package_limit_exceeded", ProcessingMessages.XmlNodeLimit(totalXmlNodes, _options.MaxXmlNodes))]);
 
                             if (xmlReader.NodeType == XmlNodeType.Element)
                             {
@@ -245,12 +245,12 @@ public sealed class OfficePackageReader
                     catch (XmlException ex)
                     {
                         var code = ex.Message.Contains("MaxCharactersInDocument", StringComparison.Ordinal) ? "office_package_limit_exceeded" : "invalid_office_package";
-                        return OfficeReadResult.Failure([new FileError(code, "XML không hợp lệ hoặc vượt giới hạn ký tự.")]);
+                        return OfficeReadResult.Failure([new FileError(code, ProcessingMessages.InvalidOrOversizedXml)]);
                     }
                 }
 
                 if (isStrictOoxml)
-                    return OfficeReadResult.Failure([new FileError("office_unsupported_content", "Định dạng Strict OOXML không được hỗ trợ trong phiên bản office-v1.")]);
+                    return OfficeReadResult.Failure([new FileError("office_unsupported_content", ProcessingMessages.StrictOoxmlUnsupported)]);
 
                 // Check content types for main document part
                 using (var ctStream = new MemoryStream(contentTypesBytes!))
@@ -309,10 +309,10 @@ public sealed class OfficePackageReader
                 };
 
                 if (detectedFormat is null)
-                    return OfficeReadResult.Failure([new FileError("invalid_office_package", "Không tìm thấy kiểu nội dung tài liệu chính hợp lệ trong gói.")]);
+                    return OfficeReadResult.Failure([new FileError("invalid_office_package", ProcessingMessages.InvalidMainContentType)]);
 
                 if (detectedFormat != expectedFormat)
-                    return OfficeReadResult.Failure([new FileError("office_format_mismatch", $"Định dạng tệp thực tế ({detectedFormat}) không khớp với phần mở rộng yêu cầu ({expectedFormat}).")]);
+                    return OfficeReadResult.Failure([new FileError("office_format_mismatch", ProcessingMessages.FormatMismatch(detectedFormat.ToString(), expectedFormat.ToString()))]);
 
                 var source = new OfficeSource(bytes, sourceHash, expectedFormat, _options);
                 return OfficeReadResult.Success(source);

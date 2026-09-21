@@ -68,7 +68,7 @@ public sealed class MarkdownUnifiedTokenTests
     /// <param name="source">Original Markdown source.</param>
     /// <param name="translation">Invalid translated content.</param>
     /// <param name="code">Expected error code.</param>
-    /// <returns>Task completing after rejection assertions.</returns>
+    /// <returns>Task completing after source preservation and skip assertions.</returns>
     [Theory]
     [InlineData("**One** after", "<ox:r0></ox:r0><ox:r1>A\n\nB</ox:r1>", "invalid_structure")]
     [InlineData("**One** after", "<ox:r0></ox:r0>", "invalid_marker_syntax")]
@@ -77,8 +77,9 @@ public sealed class MarkdownUnifiedTokenTests
     {
         var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
         var output = await service.ExportAsync(new MemoryStream(Encoding.UTF8.GetBytes(source)), [translation]);
-        Assert.Null(output.Content);
-        Assert.Contains(output.Errors, error => error.Code == code);
+        Assert.Equal(Encoding.UTF8.GetBytes(source), output.Content);
+        Assert.Empty(output.Errors);
+        Assert.Contains(output.Metadata.Skipped, error => error.Code == code);
     }
 
     /// <summary>
@@ -165,7 +166,7 @@ public sealed class MarkdownUnifiedTokenTests
     }
 
     /// <summary>
-    /// Verifies malformed, reordered, nested or empty run tokens fail atomically.
+    /// Verifies malformed, reordered, nested or empty run tokens preserve source unit.
     /// </summary>
     /// <param name="translation">Invalid structured translation.</param>
     /// <param name="code">Expected validation code.</param>
@@ -177,16 +178,17 @@ public sealed class MarkdownUnifiedTokenTests
     [InlineData("<ox:r0>\\q</ox:r0><ox:r1>B</ox:r1>", "invalid_marker_syntax")]
     [InlineData("<ox:r0> </ox:r0><ox:r1></ox:r1>", "empty_translation")]
     [InlineData("<keepme1>A<keepme1/>B", "invalid_marker_syntax")]
-    public async Task InvalidWireTokensReturnNoOutput(string translation, string code)
+    public async Task InvalidWireTokensPreserveSource(string translation, string code)
     {
         var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
         var bytes = Encoding.UTF8.GetBytes("**One** after");
         var result = await service.ExportAsync(new MemoryStream(bytes), [translation]);
-        Assert.Null(result.Content);
-        var error = Assert.Single(result.Errors);
+        Assert.Equal(bytes, result.Content);
+        Assert.Empty(result.Errors);
+        var error = Assert.Single(result.Metadata.Skipped);
         Assert.Equal(code, error.Code);
-        Assert.Equal(0, error.Index);
-        Assert.Equal(new SourceLineRange(1, 1), error.Line);
+        Assert.Equal(0, error.UnitIndex);
+        Assert.Equal(new SourceLineRange(1, 1), error.Location.Line);
         Assert.Equal("**One** after", Encoding.UTF8.GetString(bytes));
     }
 
@@ -205,8 +207,9 @@ public sealed class MarkdownUnifiedTokenTests
         Assert.Empty(output.Errors);
         Assert.Equal("**Bonjour**", Encoding.UTF8.GetString(output.Content!));
         var invalid = await service.ExportAsync(new MemoryStream(bytes), ["\uD800"]);
-        Assert.Equal("invalid_translation", Assert.Single(invalid.Errors).Code);
-        Assert.Null(invalid.Content);
+        Assert.Equal("invalid_translation", Assert.Single(invalid.Metadata.Skipped).Code);
+        Assert.Equal(bytes, invalid.Content);
+        Assert.Empty(invalid.Errors);
     }
 
     /// <summary>

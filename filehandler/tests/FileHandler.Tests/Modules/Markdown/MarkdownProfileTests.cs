@@ -57,7 +57,7 @@ public sealed class MarkdownProfileTests
     }
 
     /// <summary>
-    /// Verifies rejection of invalid translation batches and marker content.
+    /// Verifies fatal batch validation and recoverable marker exclusions.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
@@ -69,31 +69,37 @@ public sealed class MarkdownProfileTests
         Assert.Contains(count.Errors, x => x.Code == "translation_count_mismatch");
 
         var empty = await service.ExportAsync(new MemoryStream(source), [" "], TestContext.Current.CancellationToken);
-        Assert.Contains(empty.Errors, x => x.Code == "empty_translation");
+        Assert.Equal(source, empty.Content);
+        Assert.Contains(empty.Metadata.Skipped, x => x.Code == "empty_translation");
 
         var duplicate = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>x</ox:r0><ox:r0>x</ox:r0>"], TestContext.Current.CancellationToken);
-        Assert.Contains(duplicate.Errors, x => x.Code == "invalid_marker_syntax");
+        Assert.Equal(source, duplicate.Content);
+        Assert.Contains(duplicate.Metadata.Skipped, x => x.Code == "invalid_marker_syntax");
 
         var unexpected = await service.ExportAsync(new MemoryStream(source), ["<ox:r99>x</ox:r99>"], TestContext.Current.CancellationToken);
-        Assert.Contains(unexpected.Errors, x => x.Code == "invalid_marker_syntax");
+        Assert.Equal(source, unexpected.Content);
+        Assert.Contains(unexpected.Metadata.Skipped, x => x.Code == "invalid_marker_syntax");
 
         var protectedContent = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>x</ox:r0><ox:r1>y</ox:r1><ox:r2> and </ox:r2><ox:k0>bad</ox:k0><ox:r3>.</ox:r3>"], TestContext.Current.CancellationToken);
-        Assert.Contains(protectedContent.Errors, x => x.Code == "invalid_marker_syntax");
-        Assert.Null(protectedContent.Content);
+        Assert.Equal(source, protectedContent.Content);
+        Assert.Contains(protectedContent.Metadata.Skipped, x => x.Code == "invalid_marker_syntax");
+        Assert.Empty(protectedContent.Errors);
 
         var nonCanonical = await service.ExportAsync(new MemoryStream(source), ["<ox:r00>y</ox:r00>"], TestContext.Current.CancellationToken);
-        Assert.Contains(nonCanonical.Errors, x => x.Code == "invalid_marker_syntax");
+        Assert.Equal(source, nonCanonical.Content);
+        Assert.Contains(nonCanonical.Metadata.Skipped, x => x.Code == "invalid_marker_syntax");
 
         var overflow = await service.ExportAsync(new MemoryStream(source), ["<ox:r999999999999999999>x</ox:r999999999999999999>"], TestContext.Current.CancellationToken);
-        Assert.Contains(overflow.Errors, x => x.Code == "invalid_marker_syntax");
+        Assert.Equal(source, overflow.Content);
+        Assert.Contains(overflow.Metadata.Skipped, x => x.Code == "invalid_marker_syntax");
     }
 
     /// <summary>
-    /// Verifies rejection of heading changes when internal anchors exist.
+    /// Verifies unsafe heading changes retain source while independent paragraphs translate.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
-    public async Task RejectsHeadingChangeWhenInternalAnchorExists()
+    public async Task SkipsHeadingChangeWhenInternalAnchorExists()
     {
         var service = Create();
         var source = Encoding.UTF8.GetBytes("# Hello\n\n[Jump](#hello)\n");
@@ -101,8 +107,8 @@ public sealed class MarkdownProfileTests
         var translations = imported.Texts.ToArray();
         translations[0] = "Xin chào";
         var exported = await service.ExportAsync(new MemoryStream(source), translations, TestContext.Current.CancellationToken);
-        Assert.Contains(exported.Errors, x => x.Code == "internal_anchor_change_unsupported");
-        Assert.Null(exported.Content);
+        Assert.Contains(exported.Metadata.Skipped, x => x.Code == "internal_anchor_change_unsupported");
+        Assert.Equal(source, exported.Content);
     }
 
     /// <summary>
@@ -142,16 +148,16 @@ public sealed class MarkdownProfileTests
     }
 
     /// <summary>
-    /// Verifies rejection of translations that add Markdown blocks.
+    /// Verifies translations creating additional blocks retain source unit.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
-    public async Task RejectsTranslationThatCreatesAnotherBlock()
+    public async Task SkipsTranslationThatCreatesAnotherBlock()
     {
         var service = Create();
         var source = Encoding.UTF8.GetBytes("A paragraph.\n");
         var exported = await service.ExportAsync(new MemoryStream(source), ["First\n\nSecond"], TestContext.Current.CancellationToken);
-        Assert.Null(exported.Content);
-        Assert.Contains(exported.Errors, x => x.Code == "invalid_structure");
+        Assert.Equal(source, exported.Content);
+        Assert.Contains(exported.Metadata.Skipped, x => x.Code == "invalid_structure");
     }
 }

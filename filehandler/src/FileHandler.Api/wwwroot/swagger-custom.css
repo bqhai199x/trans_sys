@@ -31,3 +31,44 @@ textarea[name="texts"]:focus,
 .json-textarea-container {
     width: 100%;
 }
+
+.swagger-ui .multipart-result {
+    margin: 16px 20px;
+    padding: 16px;
+    border: 1px solid #4990e2;
+    border-radius: 4px;
+    background: #f4f8fc;
+}
+
+.swagger-ui .multipart-result pre {
+    max-height: 420px;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.swagger-ui .multipart-result a {
+    display: inline-block;
+    margin-top: 12px;
+    font-weight: 600;
+}
+
+.swagger-ui .multipart-result summary {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.swagger-ui .response-downloads {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+}
+
+.swagger-ui .opblock:not(.is-open) .multipart-result {
+    display: none;
+}
+
+/* Actual response headers remain visible; decoded parts replace raw multipart download. */
+.swagger-ui .has-multipart-result .live-responses-table .download-contents {
+    display: none;
+}

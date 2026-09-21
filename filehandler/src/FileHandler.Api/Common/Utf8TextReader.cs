@@ -40,7 +40,7 @@ internal static class Utf8TextReader
                     break;
                 if (output.Length + read > maxBytes)
                 {
-                    return (null, new FileError("file_too_large", $"Tệp vượt giới hạn {maxBytes} byte."));
+                    return (null, new FileError("file_too_large", ProcessingMessages.InputSizeLimit(maxBytes)));
                 }
                 await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
             }
@@ -55,7 +55,7 @@ internal static class Utf8TextReader
             }
             catch (DecoderFallbackException)
             {
-                return (null, new FileError("invalid_encoding", "Tệp phải dùng UTF-8 hợp lệ."));
+                return (null, new FileError("invalid_encoding", ProcessingMessages.InvalidEncoding));
             }
         }
         finally

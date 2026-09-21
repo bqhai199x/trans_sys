@@ -90,6 +90,16 @@ internal sealed record MarkdownUnit(int Start, int End, string Text, IReadOnlyDi
 {
 
     /// <summary>
+    /// Inclusive enclosing block start for local structure validation.
+    /// </summary>
+    public int? BlockStart { get; init; }
+
+    /// <summary>
+    /// Exclusive enclosing block end for local structure validation.
+    /// </summary>
+    public int? BlockEnd { get; init; }
+
+    /// <summary>
     /// Whether translated text requires Mermaid label encoding instead of Markdown escaping.
     /// </summary>
     public bool IsMermaidLabel { get; init; }
@@ -107,7 +117,14 @@ internal sealed record MarkdownUnit(int Start, int End, string Text, IReadOnlyDi
 /// <param name="Units">Translation units in source order.</param>
 /// <param name="Errors">Extraction errors.</param>
 /// <param name="HasInternalLinks">Whether document contains internal anchor links.</param>
-internal sealed record MarkdownExtraction(MarkdownSource Source, IReadOnlyList<MarkdownUnit> Units, IReadOnlyList<FileError> Errors, bool HasInternalLinks = false);
+internal sealed record MarkdownExtraction(MarkdownSource Source, IReadOnlyList<MarkdownUnit> Units, IReadOnlyList<FileError> Errors, bool HasInternalLinks = false)
+{
+
+    /// <summary>
+    /// Protected source blocks and inline objects excluded during extraction.
+    /// </summary>
+    public IReadOnlyList<SkipMetadata> Skipped { get; init; } = [];
+}
 
 /// <summary>
 /// Encoded inline text and its original source span.

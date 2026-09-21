@@ -44,7 +44,7 @@ internal static class PlainTextSegmenter
                 if (paragraphStart < 0)
                 {
                     if (units.Count >= maxUnits)
-                        return ([], new FileError("too_many_units", $"Tệp vượt giới hạn {maxUnits} đoạn."));
+                        return ([], new FileError("too_many_units", ProcessingMessages.ParagraphLimit(maxUnits)));
                     paragraphStart = lineStart;
                     firstLine = line;
                 }

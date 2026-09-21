@@ -101,21 +101,21 @@ internal static class MarkdownTokenCodec
             else
             {
                 if (!translation.AsSpan(offset).StartsWith(marker, StringComparison.Ordinal))
-                    return Reject(index, line, "invalid_marker_syntax", marker);
+                    return Reject(index, line, SkipCodes.InvalidMarkerSyntax, marker);
                 offset += marker.Length;
                 if (part.IsAnchor)
                     continue;
                 if (!TranslationTokenSyntax.TryReadText(translation, ref offset, TranslationTokenSyntax.Close(part.Id), out text))
-                    return Reject(index, line, "invalid_marker_syntax", marker);
+                    return Reject(index, line, SkipCodes.InvalidMarkerSyntax, marker);
             }
             hasContent |= !string.IsNullOrWhiteSpace(text);
             foreach (var tokenIndex in part.TokenIndexes)
                 restored[tokenIndex] = restored[tokenIndex] with { Value = tokenIndex == part.TokenIndexes[0] ? text : string.Empty };
         }
         if (template.Structured && offset != translation.Length)
-            return Reject(index, line, "invalid_marker_syntax", null);
+            return Reject(index, line, SkipCodes.InvalidMarkerSyntax, null);
         if (!hasContent)
-            return Reject(index, line, "empty_translation", null);
+            return Reject(index, line, SkipCodes.EmptyTranslation, null);
         return (restored, null);
     }
 
@@ -130,9 +130,9 @@ internal static class MarkdownTokenCodec
     private static (IReadOnlyList<MarkerToken> Tokens, FileError? Error) Reject(
         int index, SourceLineRange line, string code, string? marker)
     {
-        var error = new FileError(code, code == "empty_translation"
-            ? "Đơn vị dịch phải có nội dung trong ít nhất một slot."
-            : "Bản dịch phải giữ nguyên token ox, thứ tự và cú pháp escape của nguồn.", index, line, marker);
+        var error = new FileError(code, code == SkipCodes.EmptyTranslation
+            ? ProcessingMessages.EmptySlots
+            : ProcessingMessages.MarkdownTokens, index, line, marker);
         return ([], error);
     }
 }
