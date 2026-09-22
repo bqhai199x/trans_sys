@@ -106,6 +106,23 @@ public sealed record FileMetadata
     }
 
     /// <summary>
+    /// Appends diagnostics while retaining totals for unmaterialized source skips.
+    /// </summary>
+    /// <param name="additional">New translation or rename diagnostics.</param>
+    /// <returns>Metadata containing combined entries and complete object totals.</returns>
+    internal FileMetadata AppendSkipped(IReadOnlyList<SkipMetadata> additional)
+    {
+        if (additional.Count == 0) return this;
+        var current = SkipCount;
+        var added = SkipCounts.From(additional);
+        return this with
+        {
+            Skipped = Skipped.Concat(additional).ToArray(),
+            SkipCount = new(current.Warning + added.Warning, current.Info + added.Info)
+        };
+    }
+
+    /// <summary>
     /// Removes import mapping and derives outcome from retained warnings.
     /// </summary>
     /// <param name="failed">Whether operation failed.</param>

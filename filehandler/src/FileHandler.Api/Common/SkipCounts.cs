@@ -15,6 +15,7 @@ public sealed record SkipCounts(long Warning, long Info)
     /// <returns>Warning and informational totals from known source facts.</returns>
     public static SkipCounts From(IReadOnlyList<SkipMetadata> skipped)
     {
+        if (skipped is ICountedSkips counted) return counted.Counts;
         long warning = 0;
         long info = 0;
         foreach (var skip in skipped)
@@ -24,4 +25,16 @@ public sealed record SkipCounts(long Warning, long Info)
         }
         return new(warning, info);
     }
+}
+
+/// <summary>
+/// Skip collections retaining totals without materializing every informational entry.
+/// </summary>
+internal interface ICountedSkips
+{
+
+    /// <summary>
+    /// Complete warning and informational object counts.
+    /// </summary>
+    SkipCounts Counts { get; }
 }

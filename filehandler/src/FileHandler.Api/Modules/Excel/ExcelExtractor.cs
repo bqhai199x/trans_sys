@@ -65,7 +65,7 @@ public sealed class ExcelExtractor : IExcelExtractor
     /// <returns>Source mapping, inventory and exclusions.</returns>
     public ExcelPlan Analyze(OfficeSource source, OfficeInventory inventory, ExcelSelection selection, CancellationToken cancellationToken)
     {
-        using var ms = new MemoryStream(source.OriginalBytes);
+        using var ms = new MemoryStream(source.Bytes);
         using var doc = SpreadsheetDocument.Open(ms, false, OfficeTextBindings.Settings(_options));
 
         if (doc.WorkbookPart?.Workbook?.Sheets is null)
@@ -83,7 +83,7 @@ public sealed class ExcelExtractor : IExcelExtractor
         var selectedIds = selection.SheetIds?.ToHashSet(StringComparer.Ordinal);
         if (selectedIds is not null && selectedIds.Except(catalog.Select(s => s.SheetId)).Any())
             throw new UnknownSelectionException(FileMetadata.Create("excel") with { Sheets = catalog });
-        var skipped = new List<SkipMetadata>();
+        var skipped = new OfficeSkipCollector(source);
         source.ProcessingMetadata = FileMetadata.Create("excel") with { Sheets = catalog, Skipped = skipped };
 
         var sheetIndex = 0;
@@ -108,8 +108,11 @@ public sealed class ExcelExtractor : IExcelExtractor
 
             if (!selected || !isWorksheet)
             {
-                skipped.Add(new(!selected ? SkipCodes.SheetNotSelected : SkipCodes.UnsupportedSheet, !selected ? SkipSeverity.Info : SkipSeverity.Warning,
-                    !selected ? SkipStage.Selection : SkipStage.Extraction, SkipScope.Sheet, 1, !selected ? ProcessingMessages.SheetNotSelected : ProcessingMessages.UnsupportedSheet, new(PartUri: partUri, SheetId: descriptor.SheetId)));
+                if (!selected)
+                    skipped.Info(SkipCodes.SheetNotSelected, SkipStage.Selection, SkipScope.Sheet, ProcessingMessages.SheetNotSelected, partUri, sheetId: descriptor.SheetId);
+                else
+                    skipped.Add(new(SkipCodes.UnsupportedSheet, SkipSeverity.Warning, SkipStage.Extraction, SkipScope.Sheet, 1,
+                        ProcessingMessages.UnsupportedSheet, new(PartUri: partUri, SheetId: descriptor.SheetId)));
                 sheets.Add(new ExcelSheetSnapshot(sheetName, partUri, isHidden ? "Hidden" : "OtherPart", 0));
                 continue;
             }
@@ -131,7 +134,7 @@ public sealed class ExcelExtractor : IExcelExtractor
             };
             units.Add(new OfficeTranslationUnit(units.Count, "sheet:" + descriptor.SheetId, "sheet:" + descriptor.SheetId,
                 nameLocation, UnitMode.Plain, sheetName, [new("r0", sheetName, "")], [], [], "")
-            { Kind = "sheetName" });
+            { Kind = OfficeUnitKinds.SheetName });
             var hiddenColumns = new bool[16385];
             var hiddenColumnChanges = new int[16386];
             var mergedCells = new ExcelMergeIndex(worksheet.Descendants<MergeCell>());
@@ -164,7 +167,8 @@ public sealed class ExcelExtractor : IExcelExtractor
                         throw new InvalidDataException("Duplicate cell coordinates prevent safe extraction.");
                 if (row.Hidden?.Value == true)
                 {
-                    skipped.Add(new(SkipCodes.HiddenRow, SkipSeverity.Info, SkipStage.Extraction, SkipScope.Row, 1, ProcessingMessages.HiddenRow, new(PartUri: partUri, SheetId: descriptor.SheetId, CellReference: row.RowIndex?.Value.ToString())));
+                    skipped.Info(SkipCodes.HiddenRow, SkipStage.Extraction, SkipScope.Row, ProcessingMessages.HiddenRow,
+                        partUri, sheetId: descriptor.SheetId, cellReference: row.RowIndex?.Value.ToString());
                     continue;
                 }
 
@@ -190,23 +194,22 @@ public sealed class ExcelExtractor : IExcelExtractor
 
                     if (!ExcelCellResolver.TryParseCoordinates(cellRef, out var columnNumber, out var rowNumber) || columnNumber > 16384)
                         throw new InvalidDataException("Invalid cell coordinates.");
-                    var cellLocation = new SourceLocation(PartUri: partUri, SheetId: descriptor.SheetId, CellReference: cellRef) { SheetId = descriptor.SheetId };
                     if (hiddenColumns[columnNumber])
                     {
-                        skipped.Add(new(SkipCodes.HiddenColumn, SkipSeverity.Info, SkipStage.Extraction, SkipScope.Cell, 1, ProcessingMessages.HiddenColumn, cellLocation));
+                        skipped.Info(SkipCodes.HiddenColumn, SkipStage.Extraction, SkipScope.Cell, ProcessingMessages.HiddenColumn, partUri, sheetId: descriptor.SheetId, cellReference: cellRef);
                         continue;
                     }
 
                     // Check if protected table identifier
                     if (protectedCells.Contains(columnNumber, rowNumber))
                     {
-                        skipped.Add(new(SkipCodes.ProtectedTableCell, SkipSeverity.Info, SkipStage.Extraction, SkipScope.Cell, 1, ProcessingMessages.ProtectedTableCell, cellLocation));
+                        skipped.Info(SkipCodes.ProtectedTableCell, SkipStage.Extraction, SkipScope.Cell, ProcessingMessages.ProtectedTableCell, partUri, sheetId: descriptor.SheetId, cellReference: cellRef);
                         continue;
                     }
 
                     if (ExcelCellResolver.HasFormula(cell))
                     {
-                        skipped.Add(new(SkipCodes.FormulaCell, SkipSeverity.Info, SkipStage.Extraction, SkipScope.Cell, 1, ProcessingMessages.FormulaCell, cellLocation));
+                        skipped.Info(SkipCodes.FormulaCell, SkipStage.Extraction, SkipScope.Cell, ProcessingMessages.FormulaCell, partUri, sheetId: descriptor.SheetId, cellReference: cellRef);
                         continue;
                     }
                     OpenXmlElement? payload = null;
@@ -221,7 +224,7 @@ public sealed class ExcelExtractor : IExcelExtractor
                     if (payload is null)
                     {
                         if (!string.IsNullOrEmpty(cell.InnerText))
-                            skipped.Add(new(SkipCodes.NonTextCell, SkipSeverity.Info, SkipStage.Extraction, SkipScope.Cell, 1, ProcessingMessages.NonTextCell, cellLocation));
+                            skipped.Info(SkipCodes.NonTextCell, SkipStage.Extraction, SkipScope.Cell, ProcessingMessages.NonTextCell, partUri, sheetId: descriptor.SheetId, cellReference: cellRef);
                         continue;
                     }
                     if (!templates.TryGetValue(payload, out var cached))
@@ -229,14 +232,14 @@ public sealed class ExcelExtractor : IExcelExtractor
                         var cellText = payload.InnerText;
                         if (string.IsNullOrWhiteSpace(cellText))
                         {
-                            if (cellText.Length > 0) skipped.Add(new(SkipCodes.WhitespaceCell, SkipSeverity.Info, SkipStage.Extraction, SkipScope.Cell, 1, ProcessingMessages.WhitespaceCell, cellLocation));
+                            if (cellText.Length > 0) skipped.Info(SkipCodes.WhitespaceCell, SkipStage.Extraction, SkipScope.Cell, ProcessingMessages.WhitespaceCell, partUri, sheetId: descriptor.SheetId, cellReference: cellRef);
                             continue;
                         }
                         if (payload.Descendants<S.PhoneticRun>().Any() || payload.Descendants<S.PhoneticProperties>().Any())
                         {
                             var phoneticLocation = shared
                                 ? OfficeMetadata.Location(OfficeMetadata.At(new("/" + sstPart!.Uri.ToString().TrimStart('/'), [], CellReference: cellRef) { SheetId = descriptor.SheetId }, payload))
-                                : cellLocation;
+                                : new SourceLocation(PartUri: partUri, SheetId: descriptor.SheetId, CellReference: cellRef);
                             skipped.Add(new(SkipCodes.PhoneticContent, SkipSeverity.Warning, SkipStage.Extraction, SkipScope.Cell, 1, ProcessingMessages.PhoneticContent, phoneticLocation));
                             continue;
                         }
@@ -250,7 +253,8 @@ public sealed class ExcelExtractor : IExcelExtractor
                     }
                     if (mergedCells.IsFollower(columnNumber, rowNumber))
                     {
-                        skipped.Add(new(SkipCodes.MergedFollowerText, SkipSeverity.Warning, SkipStage.Extraction, SkipScope.Cell, 1, ProcessingMessages.MergedFollowerText, cellLocation));
+                        skipped.Add(new(SkipCodes.MergedFollowerText, SkipSeverity.Warning, SkipStage.Extraction, SkipScope.Cell, 1,
+                            ProcessingMessages.MergedFollowerText, new(PartUri: partUri, SheetId: descriptor.SheetId, CellReference: cellRef)));
                         continue;
                     }
                     var unitId = OfficeIdentity.CreateUnitId("office-v1", string.Empty, OfficeFormat.Excel,

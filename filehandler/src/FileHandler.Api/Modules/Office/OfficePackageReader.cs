@@ -314,7 +314,7 @@ public sealed class OfficePackageReader
                 if (detectedFormat != expectedFormat)
                     return OfficeReadResult.Failure([new FileError("office_format_mismatch", ProcessingMessages.FormatMismatch(detectedFormat.ToString(), expectedFormat.ToString()))]);
 
-                var source = new OfficeSource(bytes, sourceHash, expectedFormat, _options);
+                var source = OfficeSource.TakeOwnership(bytes, sourceHash, expectedFormat, _options);
                 return OfficeReadResult.Success(source);
             }
         }

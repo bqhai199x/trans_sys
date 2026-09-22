@@ -160,7 +160,7 @@ internal static class OfficeTextBindings
         for (var i = 0; i < units.Count; i++)
         {
             var unit = units[i];
-            if (unit.Kind == "sheetName" || !Changed(unit, decoded[i])) continue;
+            if (unit.Kind == OfficeUnitKinds.SheetName || !Changed(unit, decoded[i])) continue;
             var uri = unit.Location.PartUri;
             if (!parts.TryGetValue(uri, out var edits)) parts[uri] = edits = new(StringComparer.Ordinal);
             foreach (var edit in BuildChanges(unit, decoded[i], uri)) edits.Add(edit.Key, edit.Value);
@@ -177,7 +177,7 @@ internal static class OfficeTextBindings
     /// <returns>Exact scalar expectations.</returns>
     private static Dictionary<string, OfficeScalarEdit> BuildChanges(OfficeTranslationUnit unit, OfficeDecodedUnit decoded, string? partUri)
     {
-        if (unit.Kind == "sheetName") return new(StringComparer.Ordinal);
+        if (unit.Kind == OfficeUnitKinds.SheetName) return new(StringComparer.Ordinal);
         var replacements = new Dictionary<string, List<(OfficeTextBinding Binding, string Value)>>(StringComparer.Ordinal);
         var groups = unit.Bindings.ToLookup(b => b.EditGroupId, StringComparer.Ordinal);
         for (var slot = 0; slot < unit.Slots.Count; slot++)

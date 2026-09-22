@@ -5,6 +5,7 @@ using DocumentFormat.OpenXml.Packaging;
 using FileHandler.Api.Common;
 using FileHandler.Api.Modules.Office;
 using S = DocumentFormat.OpenXml.Spreadsheet;
+using Xdr = DocumentFormat.OpenXml.Drawing.Spreadsheet;
 
 namespace FileHandler.Api.Modules.Excel;
 
@@ -29,7 +30,7 @@ internal static class ExcelRenamePlanner
     {
         var catalog = plan.Metadata.Sheets!;
         var names = catalog.ToDictionary(s => s.SheetId, s => s.Name, StringComparer.Ordinal);
-        var units = plan.Units.Where(u => u.Kind == "sheetName").ToArray();
+        var units = plan.Units.Where(u => u.Kind == OfficeUnitKinds.SheetName).ToArray();
         foreach (var unit in units)
         {
             var raw = decoded[unit.Index].DecodedSlots[0];
@@ -41,35 +42,50 @@ internal static class ExcelRenamePlanner
         if (changed.Length > 0)
         {
             var parts = Parts(document).ToArray();
-            var references = new List<(OpenXmlPart Part, OpenXmlElement Element, string? Attribute, string Value)>();
+            var references = new List<(OpenXmlPart Part, OpenXmlElement Element, string? Attribute, string Value, IReadOnlyList<ExcelSheetReference> Spans)>();
             var safe = true;
             var blockedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var originalNames = catalog.ToDictionary(s => s.Name, s => s.Name, StringComparer.OrdinalIgnoreCase);
+            var sheetNames = catalog.Select(s => s.Name).ToArray();
+            var positions = sheetNames.Select((name, index) => (name, index)).ToDictionary(p => p.name, p => p.index, StringComparer.OrdinalIgnoreCase);
             foreach (var part in parts)
             {
                 token.ThrowIfCancellationRequested();
-                if (part.ContentType.Contains("pivot", StringComparison.OrdinalIgnoreCase) || part.ContentType.Contains("externalLink", StringComparison.OrdinalIgnoreCase)) safe = false;
+                if (part is VmlDrawingPart or ControlPropertiesPart or EmbeddedControlPersistencePart or EmbeddedControlPersistenceBinaryDataPart ||
+                    part.ContentType.Contains("pivot", StringComparison.OrdinalIgnoreCase) || part.ContentType.Contains("externalLink", StringComparison.OrdinalIgnoreCase) ||
+                    part.HyperlinkRelationships.Any(r => r.Uri.OriginalString.StartsWith('#'))) safe = false;
                 if (part.RootElement is not { } root) continue;
                 foreach (var element in root.Descendants())
                 {
                     token.ThrowIfCancellationRequested();
-                    if (element.LocalName == "extLst") safe = false;
+                    if (element.LocalName == "extLst" || element is S.ControlProperties or S.DataReference ||
+                        element is Xdr.Shape { TextLink.Value.Length: > 0 } || element is S.OleObject { Link.Value.Length: > 0 }) safe = false;
                     var isFormula = element is OpenXmlLeafTextElement &&
                         (element.NamespaceUri == "http://schemas.openxmlformats.org/spreadsheetml/2006/main" &&
                             element.LocalName is "f" or "definedName" or "formula" or "formula1" or "formula2" or "calculatedColumnFormula" or "totalsRowFormula" ||
                          element.NamespaceUri == "http://schemas.openxmlformats.org/drawingml/2006/chart" && element.LocalName == "f");
-                    if (isFormula)
+                    var formula = isFormula ? element.InnerText : null;
+                    string? formulaAttribute = null;
+                    if (element is S.ConditionalFormatValueObject threshold && threshold.Type?.Value == S.ConditionalFormatValueObjectValues.Formula)
                     {
-                        if (ExcelFormulaReferences.TryRewrite(element.InnerText, originalNames, out _))
-                            references.Add((part, element, null, element.InnerText));
-                        else if (ExcelFormulaReferences.TryFindAffectedSheets(element.InnerText, catalog.Select(s => s.Name).ToArray(), out var affected))
+                        formula = threshold.Val?.Value;
+                        formulaAttribute = "val";
+                    }
+                    if (formula is not null)
+                    {
+                        if (ExcelFormulaReferences.TryParse(formula, originalNames, out var spans))
+                        {
+                            if (spans.Count > 0) references.Add((part, element, formulaAttribute, formula, spans));
+                        }
+                        else if (ExcelFormulaReferences.TryFindAffectedSheets(formula, sheetNames, positions, out var affected))
                             blockedNames.UnionWith(affected);
                         else safe = false;
                     }
-                    if (element is S.Hyperlink hyperlink && hyperlink.Location?.Value is { } location)
+                    if (element is S.Hyperlink hyperlink && hyperlink.Id is null && hyperlink.Location?.Value is { } location)
                     {
-                        references.Add((part, element, "location", location));
-                        if (!ExcelFormulaReferences.TryRewrite(location, originalNames, out _)) safe = false;
+                        if (ExcelFormulaReferences.TryParse(location, originalNames, out var spans))
+                            references.Add((part, element, "location", location, spans));
+                        else safe = false;
                     }
                 }
             }
@@ -86,22 +102,26 @@ internal static class ExcelRenamePlanner
             {
                 var changingIds = changed.Where(u => !blockedNames.Contains(u.EncodedSource)).Select(u => u.Location.SheetId!).ToHashSet(StringComparer.Ordinal);
                 var reserved = catalog.Where(s => !changingIds.Contains(s.SheetId)).Select(s => s.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var nextSuffixes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 foreach (var sheet in catalog.Where(s => changingIds.Contains(s.SheetId)))
                 {
+                    token.ThrowIfCancellationRequested();
                     var name = names[sheet.SheetId];
                     var candidate = name;
-                    for (var suffix = 2; !reserved.Add(candidate); suffix++)
+                    var suffix = nextSuffixes.GetValueOrDefault(name, 2);
+                    while (!reserved.Add(candidate))
                     {
-                        var tail = " (" + suffix.ToString(System.Globalization.CultureInfo.InvariantCulture) + ")";
+                        token.ThrowIfCancellationRequested();
+                        var tail = " (" + (suffix++).ToString(System.Globalization.CultureInfo.InvariantCulture) + ")";
                         candidate = Truncate(name, 31 - tail.Length) + tail;
                     }
+                    nextSuffixes[name] = suffix;
                     names[sheet.SheetId] = candidate;
                 }
                 var replacements = catalog.ToDictionary(s => s.Name, s => names[s.SheetId], StringComparer.OrdinalIgnoreCase);
                 foreach (var reference in references)
                 {
-                    if (!ExcelFormulaReferences.TryRewrite(reference.Value, replacements, out var replacement))
-                        throw new InvalidOperationException("Reference safety changed during planning.");
+                    var replacement = ExcelFormulaReferences.Rewrite(reference.Value, reference.Spans, replacements);
                     if (replacement != reference.Value)
                         edits.Add(new(reference.Part, reference.Element, reference.Attribute, reference.Value, replacement));
                 }

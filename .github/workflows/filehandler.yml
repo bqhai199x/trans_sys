@@ -1,0 +1,29 @@
+name: FileHandler checks
+
+on:
+  push:
+    paths: ["filehandler/**", "AGENTS.md", ".github/workflows/filehandler.yml"]
+  pull_request:
+    paths: ["filehandler/**", "AGENTS.md", ".github/workflows/filehandler.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: filehandler
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: filehandler/global.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: dotnet restore FileHandler.sln
+      - run: dotnet build FileHandler.sln --no-restore --configuration Release -p:GenerateDocumentationFile=true
+      - run: dotnet test FileHandler.sln --no-build --no-restore --configuration Release -p:GenerateDocumentationFile=true
+      - run: node --test tests/swagger-multipart.test.cjs tests/swagger-response.test.cjs

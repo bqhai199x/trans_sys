@@ -3,7 +3,8 @@
 Chạy từ thư mục `filehandler`:
 
 ```powershell
-dotnet test FileHandler.sln
+dotnet build FileHandler.sln -p:GenerateDocumentationFile=true
+dotnet test FileHandler.sln --no-build
 ```
 
 Các unit test gọi trực tiếp method public/internal. Method private được kiểm tra qua đầu vào và kết quả của method gọi nó, không dùng reflection hoặc đổi visibility chỉ để test.
@@ -21,6 +22,8 @@ Các unit test gọi trực tiếp method public/internal. Method private đư�
 | MarkdownService | MarkdownServiceTests, MarkdownServiceBoundaryTests, MarkdownProfileTests | Import/export, round trip, giới hạn tài nguyên, lỗi nguồn, concurrency |
 | MarkdownController, PlainTextController | FilesControllerTests | Import, Export, ErrorResult/Errors qua action, JSON contract, HTTP status, download |
 | WordController, ExcelController, PowerPointController | OfficeControllerTests | Import, Export Office qua action, JSON contract, metadata header, download |
+| OfficePackageValidator, OfficeSource, skip metadata | OfficeOptimizationTests | Snapshot độc lập với buffer của caller, cache vẫn kiểm tra output/selection/quota, gọi validation lặp, skip ẩn giữ đúng vùng bảo toàn và số đếm khi lỗi |
+| ExcelRenamePlanner, ExcelFormulaReferences | ExcelRenameReviewTests, ExcelRenameCollisionTests | Structured reference, hyperlink, conditional formatting, VML/control fallback, Unicode tên sheet, suffix trùng sau truncate và tên giữ chỗ |
 | GlobalExceptionHandler | GlobalExceptionHandlerTests | HTTP 413/500 và không lộ nội dung exception |
 
 `Api/FilesApiTests.cs` kiểm tra tích hợp qua HTTP host. Bảng trên mô tả phạm vi hành vi; không phải báo cáo 100% line/branch coverage. Constructor, property và code do compiler sinh không có test riêng chỉ để tăng coverage.

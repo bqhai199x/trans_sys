@@ -158,12 +158,13 @@ public sealed class PowerPointService : ISelectableFileHandler<PowerPointSelecti
             }
 
             using var source = readResult.Source;
-            if (source.OriginalBytes.Length > _fileHandlingOptions.MaxFileBytes)
+            if (source.Bytes.Length > _fileHandlingOptions.MaxFileBytes)
             {
-                var err = new FileError("file_too_large", ProcessingMessages.FileSizeLimit(source.OriginalBytes.Length, _fileHandlingOptions.MaxFileBytes));
+                var err = new FileError("file_too_large", ProcessingMessages.FileSizeLimit(source.Bytes.Length, _fileHandlingOptions.MaxFileBytes));
                 return new([], [err]) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
             }
 
+            source.IncludeInformationalSkips = debug;
             var inventory = _inspector.Inspect(source, cancellationToken);
 
             PowerPointPlan plan;
@@ -246,12 +247,13 @@ public sealed class PowerPointService : ISelectableFileHandler<PowerPointSelecti
             }
 
             using var source = readResult.Source;
-            if (source.OriginalBytes.Length > _fileHandlingOptions.MaxFileBytes)
+            if (source.Bytes.Length > _fileHandlingOptions.MaxFileBytes)
             {
-                var err = new FileError("file_too_large", ProcessingMessages.FileSizeLimit(source.OriginalBytes.Length, _fileHandlingOptions.MaxFileBytes));
+                var err = new FileError("file_too_large", ProcessingMessages.FileSizeLimit(source.Bytes.Length, _fileHandlingOptions.MaxFileBytes));
                 return new(null, ContentType, [err]) { Metadata = metadata.ForExport(true) };
             }
 
+            source.IncludeInformationalSkips = false;
             var inventory = _inspector.Inspect(source, cancellationToken);
 
             PowerPointPlan plan;
@@ -275,24 +277,24 @@ public sealed class PowerPointService : ISelectableFileHandler<PowerPointSelecti
                 return new(null, ContentType, decodeResult.Errors) { Metadata = metadata.ForExport(true) };
             }
 
-            metadata = (metadata with { Skipped = metadata.Skipped.Concat(decodeResult.Skipped).ToArray() }).ForExport();
+            metadata = metadata.AppendSkipped(decodeResult.Skipped).ForExport();
             var patch = _applier.Prepare(plan, decodeResult.DecodedUnits, cancellationToken);
 
             var isIdentity = patch.EditMasks.Count == 0;
 
             if (isIdentity)
             {
-                if (source.OriginalBytes.Length > _fileHandlingOptions.MaxOutputBytes)
+                if (source.Bytes.Length > _fileHandlingOptions.MaxOutputBytes)
                 {
                     var err = new FileError("output_too_large", ProcessingMessages.OutputSizeLimit);
                     return new(null, ContentType, [err]) { Metadata = metadata.ForExport(true) };
                 }
 
-                return new(source.OriginalBytes, ContentType, []) { Metadata = metadata };
+                return new(source.Bytes, ContentType, []) { Metadata = metadata };
             }
 
             using var session = OfficeExportSession.Create(source, _options, _fileHandlingOptions);
-            using (var docMs = new MemoryStream(source.OriginalBytes))
+            using (var docMs = new MemoryStream(source.Bytes))
             using (var doc = PresentationDocument.Open(docMs, false, OfficeTextBindings.Settings(_options)))
             {
                 _applier.Apply(session, doc, patch, cancellationToken);
@@ -347,7 +349,7 @@ public sealed class PowerPointService : ISelectableFileHandler<PowerPointSelecti
             if (read.Source is null || read.Errors.Count > 0)
                 return new([], new("powerpoint", ProcessingStatus.Failed, []), read.Errors);
             using var source = read.Source;
-            using var bytes = new MemoryStream(source.OriginalBytes);
+            using var bytes = new MemoryStream(source.Bytes);
             using var document = PresentationDocument.Open(bytes, false, OfficeTextBindings.Settings(_options));
             var items = OfficeCatalog.Slides(document, cancellationToken);
             return new(items, new("powerpoint", ProcessingStatus.Success, []), []);

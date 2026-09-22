@@ -17,9 +17,24 @@ internal static class ExcelFormulaReferences
     /// <returns>False for dynamic, external, 3D or unrecognized sheet reference syntax.</returns>
     internal static bool TryRewrite(string formula, IReadOnlyDictionary<string, string> names, out string rewritten)
     {
-        var result = new StringBuilder(formula.Length);
-        var position = 0;
         rewritten = formula;
+        if (!TryParse(formula, names, out var references)) return false;
+        rewritten = Rewrite(formula, references, names);
+        return true;
+    }
+
+    /// <summary>
+    /// Collects sheet qualifier spans without interpreting structured column text.
+    /// </summary>
+    /// <param name="formula">Original formula or internal hyperlink target.</param>
+    /// <param name="names">Known original sheet names.</param>
+    /// <param name="references">Ordered qualifier spans when parsing succeeds.</param>
+    /// <returns>False when reference scope cannot be rewritten safely.</returns>
+    internal static bool TryParse(string formula, IReadOnlyDictionary<string, string> names, out IReadOnlyList<ExcelSheetReference> references)
+    {
+        var parsed = new List<ExcelSheetReference>();
+        references = parsed;
+        var position = 0;
         while (position < formula.Length)
         {
             var start = position;
@@ -36,7 +51,11 @@ internal static class ExcelFormulaReferences
                     break;
                 }
                 if (!closed) return false;
-                result.Append(formula, start, position - start);
+                continue;
+            }
+            if (character == '[')
+            {
+                if (!SkipStructuredReference(formula, ref position)) return false;
                 continue;
             }
             if (character == '\'')
@@ -53,17 +72,17 @@ internal static class ExcelFormulaReferences
                     closed = true;
                     break;
                 }
-                if (!closed || position == formula.Length || formula[position] != '!' || name.ToString().IndexOfAny([':', '[', ']']) >= 0)
-                    return false;
-                if (!names.TryGetValue(name.ToString(), out var replacement)) return false;
-                result.Append(replacement.Equals(name.ToString(), StringComparison.Ordinal) ? formula[start..position] : Quote(replacement)).Append('!');
+                var originalName = name.ToString();
+                if (!closed || position == formula.Length || formula[position] != '!' || originalName.IndexOfAny([':', '[', ']']) >= 0 ||
+                    !names.ContainsKey(originalName)) return false;
+                parsed.Add(new(start, position - start, originalName));
                 position++;
                 continue;
             }
-            if (char.IsLetterOrDigit(character) || character is '_' or '\\' or '$')
+            if (IsNameCharacter(character))
             {
                 position++;
-                while (position < formula.Length && (char.IsLetterOrDigit(formula[position]) || formula[position] is '_' or '.' or '\\' or '$')) position++;
+                while (position < formula.Length && IsNameCharacter(formula[position])) position++;
                 var token = formula[start..position];
                 var functionPosition = position;
                 while (functionPosition < formula.Length && char.IsWhiteSpace(formula[functionPosition])) functionPosition++;
@@ -72,19 +91,38 @@ internal static class ExcelFormulaReferences
                     return false;
                 if (position < formula.Length && formula[position] == '!')
                 {
-                    if (start > 0 && formula[start - 1] is ':' or ']' || !names.TryGetValue(token, out var replacement)) return false;
-                    result.Append(replacement.Equals(token, StringComparison.Ordinal) ? token : Quote(replacement)).Append('!');
+                    if (start > 0 && formula[start - 1] is ':' or ']' || !names.ContainsKey(token)) return false;
+                    parsed.Add(new(start, position - start, token));
                     position++;
                 }
-                else result.Append(token);
                 continue;
             }
-            if (character == '!') return false;
-            result.Append(character);
+            if (!char.IsWhiteSpace(character) && !"=+-*/^&<>(),;:{}%@#".Contains(character)) return false;
             position++;
         }
-        rewritten = result.ToString();
         return true;
+    }
+
+    /// <summary>
+    /// Applies final names to parsed qualifier spans while preserving all other text.
+    /// </summary>
+    /// <param name="formula">Original parsed formula.</param>
+    /// <param name="references">Ordered spans from successful parsing.</param>
+    /// <param name="names">Original-to-final sheet name map.</param>
+    /// <returns>Rewritten formula, or original string when no qualifier changes.</returns>
+    internal static string Rewrite(string formula, IReadOnlyList<ExcelSheetReference> references, IReadOnlyDictionary<string, string> names)
+    {
+        StringBuilder? result = null;
+        var position = 0;
+        foreach (var reference in references)
+        {
+            var replacement = names[reference.Name];
+            if (replacement.Equals(reference.Name, StringComparison.Ordinal)) continue;
+            result ??= new StringBuilder(formula.Length);
+            result.Append(formula, position, reference.Start - position).Append(Quote(replacement));
+            position = reference.Start + reference.Length;
+        }
+        return result is null ? formula : result.Append(formula, position, formula.Length - position).ToString();
     }
 
     /// <summary>
@@ -92,12 +130,12 @@ internal static class ExcelFormulaReferences
     /// </summary>
     /// <param name="formula">Formula rejected by rewrite parser.</param>
     /// <param name="sheetNames">Original workbook names in source order.</param>
+    /// <param name="positions">Original name indexes shared across formula scans.</param>
     /// <param name="affected">Names whose renames must be preserved.</param>
     /// <returns>False when dynamic or external syntax prevents proving affected scope.</returns>
-    internal static bool TryFindAffectedSheets(string formula, IReadOnlyList<string> sheetNames, out HashSet<string> affected)
+    internal static bool TryFindAffectedSheets(string formula, IReadOnlyList<string> sheetNames, IReadOnlyDictionary<string, int> positions, out HashSet<string> affected)
     {
         affected = new(StringComparer.OrdinalIgnoreCase);
-        var positions = sheetNames.Select((name, index) => (name, index)).ToDictionary(p => p.name, p => p.index, StringComparer.OrdinalIgnoreCase);
         var position = 0;
         while (position < formula.Length)
         {
@@ -116,8 +154,17 @@ internal static class ExcelFormulaReferences
                 if (!closed) return false;
                 continue;
             }
-            if (character is '[' or ']' or '!') return false;
-            if (character != '\'' && !IsNameCharacter(character)) { position++; continue; }
+            if (character == '[')
+            {
+                if (!SkipStructuredReference(formula, ref position)) return false;
+                continue;
+            }
+            if (character != '\'' && !IsNameCharacter(character))
+            {
+                if (!char.IsWhiteSpace(character) && !"=+-*/^&<>(),;:{}%@#".Contains(character)) return false;
+                position++;
+                continue;
+            }
             if (!ReadName(formula, ref position, out var name)) return false;
             if (position < formula.Length && formula[position] == ':')
             {
@@ -136,6 +183,30 @@ internal static class ExcelFormulaReferences
             for (var index = Math.Min(firstIndex, lastIndex); index <= Math.Max(firstIndex, lastIndex); index++) affected.Add(sheetNames[index]);
         }
         return affected.Count > 0;
+    }
+
+    /// <summary>
+    /// Skips nested structured brackets and apostrophe escapes without parsing column text.
+    /// </summary>
+    /// <param name="formula">Original formula.</param>
+    /// <param name="position">Opening bracket offset, advanced past matching closing bracket.</param>
+    /// <returns>False for incomplete brackets, uncertain escapes or external workbook qualifiers.</returns>
+    private static bool SkipStructuredReference(string formula, ref int position)
+    {
+        var depth = 0;
+        while (position < formula.Length)
+        {
+            var character = formula[position++];
+            if (character == '\'')
+            {
+                if (position >= formula.Length || formula[position] is not ('[' or ']' or '#' or '\'' or '@')) return false;
+                position++;
+            }
+            else if (character == '[') depth++;
+            else if (character == ']' && --depth == 0)
+                return position == formula.Length || !IsNameCharacter(formula[position]) && formula[position] is not ('\'' or '!' or '[');
+        }
+        return false;
     }
 
     /// <summary>
@@ -183,3 +254,11 @@ internal static class ExcelFormulaReferences
     /// <returns>Quoted qualifier without exclamation separator.</returns>
     private static string Quote(string name) => "'" + name.Replace("'", "''", StringComparison.Ordinal) + "'";
 }
+
+/// <summary>
+/// Original sheet qualifier span excluding exclamation separator.
+/// </summary>
+/// <param name="Start">Zero-based UTF-16 offset.</param>
+/// <param name="Length">Qualifier length in UTF-16 code units.</param>
+/// <param name="Name">Unescaped original sheet name.</param>
+internal readonly record struct ExcelSheetReference(int Start, int Length, string Name);

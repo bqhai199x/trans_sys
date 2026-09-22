@@ -386,7 +386,7 @@ public sealed record OfficeInventory(
 /// <summary>
 /// Owned immutable source snapshot for Office processing.
 /// </summary>
-public sealed class OfficeSource : IDisposable
+public sealed partial class OfficeSource : IDisposable
 {
 
     /// <summary>
@@ -395,9 +395,9 @@ public sealed class OfficeSource : IDisposable
     internal FileMetadata? ProcessingMetadata { get; set; }
 
     /// <summary>
-    /// Owned immutable byte array of original document.
+    /// Independent copy of original document bytes for external callers.
     /// </summary>
-    public byte[] OriginalBytes { get; }
+    public byte[] OriginalBytes => Bytes.ToArray();
 
     /// <summary>
     /// Hexadecimal lowercase SHA-256 digest of original bytes.
@@ -432,14 +432,7 @@ public sealed class OfficeSource : IDisposable
         string sourceHash,
         OfficeFormat format,
         OfficeProcessingOptions limits,
-        string profileVersion = "office-v1")
-    {
-        OriginalBytes = originalBytes;
-        SourceHash = sourceHash;
-        Format = format;
-        Limits = limits;
-        ProfileVersion = profileVersion;
-    }
+        string profileVersion = "office-v1") : this(originalBytes, sourceHash, format, limits, profileVersion, false) { }
 
     /// <summary>
     /// Disposes resources held by source.

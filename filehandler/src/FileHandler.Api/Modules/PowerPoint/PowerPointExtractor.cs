@@ -64,7 +64,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
     /// <returns>Source mapping, inventory and exclusions.</returns>
     public PowerPointPlan Analyze(OfficeSource source, OfficeInventory inventory, PowerPointSelection selection, CancellationToken cancellationToken)
     {
-        using var ms = new MemoryStream(source.OriginalBytes);
+        using var ms = new MemoryStream(source.Bytes);
         using var doc = PresentationDocument.Open(ms, false, OfficeTextBindings.Settings(_options));
 
         if (doc.PresentationPart?.Presentation?.SlideIdList is null)
@@ -77,7 +77,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
         var selectedIds = selection.SlideIds?.ToHashSet(StringComparer.Ordinal);
         if (selectedIds is not null && selectedIds.Except(catalog.Select(s => s.SlideId)).Any())
             throw new UnknownSelectionException(FileMetadata.Create("powerpoint") with { Slides = catalog });
-        var skipped = new List<SkipMetadata>();
+        var skipped = new OfficeSkipCollector(source);
         source.ProcessingMetadata = FileMetadata.Create("powerpoint") with { Slides = catalog, Skipped = skipped };
         var slideIndex = 0;
 
@@ -103,7 +103,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
 
             if (!selected || shapeTree is null)
             {
-                skipped.Add(new(SkipCodes.SlideNotSelected, SkipSeverity.Info, SkipStage.Selection, SkipScope.Slide, 1, ProcessingMessages.SlideNotSelected, new(PartUri: slideUri, SlideId: idVal)));
+                skipped.Info(SkipCodes.SlideNotSelected, SkipStage.Selection, SkipScope.Slide, ProcessingMessages.SlideNotSelected, slideUri, slideId: idVal);
                 slides.Add(new PowerPointSlideSnapshot(idVal, slideUri, !isHidden, shapeCount));
                 continue;
             }
@@ -142,7 +142,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
         string slideUri,
         string slideId,
         OfficeUnitCollection units,
-        List<SkipMetadata> skipped,
+        OfficeSkipCollector skipped,
         CancellationToken cancellationToken)
     {
         var shapeOrdinal = 0;
@@ -208,7 +208,7 @@ public sealed class PowerPointExtractor : IPowerPointExtractor
                 if (table is not null)
                 {
                     var tableLoc = new OfficeLocation(slideUri, Array.Empty<OfficeElementPathSegment>(), SlideId: slideId, ShapeId: gfId);
-                    _tableReader.ReadTable(table, tableLoc, units, _codec, _options, skipped);
+                    _tableReader.ReadTable(table, tableLoc, units, _codec, _options, skipped.Entries);
                 }
                 else
                 {

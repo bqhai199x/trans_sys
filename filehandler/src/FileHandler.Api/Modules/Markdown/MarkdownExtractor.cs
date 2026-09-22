@@ -173,6 +173,7 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
             EncodeInline(inline, source, allocator, markers, sb);
         return new(sb, start, end, markers);
     }
+
     /// <summary>
     /// Finds newline sequence and prefix to preserve in translations.
     /// </summary>

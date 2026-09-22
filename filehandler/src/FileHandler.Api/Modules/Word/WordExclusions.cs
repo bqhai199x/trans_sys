@@ -27,9 +27,18 @@ internal sealed class WordExclusions
     private readonly HashSet<OpenXmlElement> _reported = new(ReferenceEqualityComparer.Instance);
 
     /// <summary>
-    /// Ordered public exclusions, one per preserved subtree.
+    /// Public diagnostics and compact facts for hidden preserved subtrees.
     /// </summary>
-    internal List<SkipMetadata> Skipped { get; } = [];
+    internal OfficeSkipCollector Skipped { get; }
+
+    /// <summary>
+    /// Creates exclusions using request-local diagnostic policy.
+    /// </summary>
+    /// <param name="source">Source owning preservation and diagnostic context.</param>
+    internal WordExclusions(OfficeSource source)
+    {
+        Skipped = new(source);
+    }
 
     /// <summary>
     /// Tests whether element belongs to a preserved subtree.
@@ -52,8 +61,7 @@ internal sealed class WordExclusions
         if (Contains(element)) return;
         _excluded.Add(element, code);
         _reported.Add(element);
-        Skipped.Add(new(code, severity, SkipStage.Extraction, scope, 1, ProcessingMessages.PreservedRegion(code),
-            OfficeMetadata.Location(OfficeMetadata.At(new(partUri, []), element))));
+        Skipped.Region(code, severity, scope, ProcessingMessages.PreservedRegion(code), partUri, element);
     }
 
     /// <summary>
@@ -118,17 +126,14 @@ internal sealed class WordExclusions
         {
             if (!Contains(element) && (element is W.SimpleField or W.Drawing or W.Picture || element is W.FieldChar field && field.FieldCharType?.Value == W.FieldCharValues.Begin))
             {
-                var protectedLocation = new OfficeLocation(partUri, OfficeTextBindings.Path(element)) { Root = new(root.NamespaceUri, root.LocalName, 1) };
                 var unsupported = element.Descendants().Any(e => e.NamespaceUri.Contains("/chart", StringComparison.Ordinal) || e.NamespaceUri.Contains("/diagram", StringComparison.Ordinal));
-                Skipped.Add(new(unsupported ? SkipCodes.UnsupportedDrawing : SkipCodes.ProtectedInline, unsupported ? SkipSeverity.Warning : SkipSeverity.Info, SkipStage.Extraction, SkipScope.Inline, 1,
-                    unsupported ? ProcessingMessages.UnsupportedDrawing : ProcessingMessages.ProtectedInline, OfficeMetadata.Location(protectedLocation)));
+                Skipped.Region(unsupported ? SkipCodes.UnsupportedDrawing : SkipCodes.ProtectedInline, unsupported ? SkipSeverity.Warning : SkipSeverity.Info,
+                    SkipScope.Inline, unsupported ? ProcessingMessages.UnsupportedDrawing : ProcessingMessages.ProtectedInline, partUri, element);
             }
             if (!_excluded.TryGetValue(element, out var code) || element.Ancestors().Any(_excluded.ContainsKey)) continue;
             var scope = element is W.SdtElement ? SkipScope.ContentControl : element is W.TableCell ? SkipScope.Cell : element is W.Paragraph ? SkipScope.Block : element == root ? SkipScope.Story : SkipScope.Region;
-            var location = new OfficeLocation(partUri, OfficeTextBindings.Path(element)) { Root = new(root.NamespaceUri, root.LocalName, 1) };
-            var publicLocation = OfficeMetadata.Location(location);
             if (_reported.Add(element))
-                Skipped.Add(new(code, code == SkipCodes.MergedFollower ? SkipSeverity.Info : SkipSeverity.Warning, SkipStage.Extraction, scope, 1, ProcessingMessages.PreservedRegion(code), publicLocation));
+                Skipped.Region(code, code == SkipCodes.MergedFollower ? SkipSeverity.Info : SkipSeverity.Warning, scope, ProcessingMessages.PreservedRegion(code), partUri, element);
         }
     }
 }

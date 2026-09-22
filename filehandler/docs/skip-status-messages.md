@@ -54,7 +54,7 @@ Nguồn: [FileMetadata](../src/FileHandler.Api/Common/FileMetadata.cs), [OfficeC
 | `unsupported_sheet` | Excel | warning / extraction / sheet | Sheet được chọn nhưng part không phải worksheet, ví dụ chartsheet. | `Unsupported sheet type; source retained.` |
 | `unsafe_sheet_reference` | Excel | warning / rename / sheet | Không chứng minh được việc cập nhật tham chiếu an toàn; giữ tên nguồn và tiếp tục dịch nội dung. | `Unsafe references; sheet name retained.` |
 
-`unsafe_sheet_reference` có `unitIndex` của tên sheet. Hiện dynamic/3D/external reference, pivot, extension hoặc hyperlink không xử lý an toàn dùng chung mã này; message chưa chỉ rõ loại tham chiếu gây chặn. Khi không xác định được sheet liên quan, các rename chưa chứng minh được an toàn đều bị giữ lại.
+`unsafe_sheet_reference` có `unitIndex` của tên sheet. Hiện dynamic/3D/external reference, pivot, extension, VML/control, shape liên kết ô, data consolidation hoặc hyperlink không xử lý an toàn dùng chung mã này; message chưa chỉ rõ loại tham chiếu gây chặn. Khi không xác định được sheet liên quan, các rename chưa chứng minh được an toàn đều bị giữ lại. VML chưa được phân tích nên cả workbook chỉ dùng VML cho comment cũng có thể bị chặn rename. Hyperlink sang workbook khác giữ nguyên `location`, không đổi theo tên sheet nội bộ.
 
 Nguồn: [ExcelExtractor](../src/FileHandler.Api/Modules/Excel/ExcelExtractor.cs), [PowerPointExtractor](../src/FileHandler.Api/Modules/PowerPoint/PowerPointExtractor.cs), [ExcelRenamePlanner](../src/FileHandler.Api/Modules/Excel/ExcelRenamePlanner.cs).
 

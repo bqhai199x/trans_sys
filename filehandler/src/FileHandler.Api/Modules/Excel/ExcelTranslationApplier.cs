@@ -35,7 +35,7 @@ public sealed class ExcelTranslationApplier
             cancellationToken.ThrowIfCancellationRequested();
             var unit = plan.Units[i];
             var decoded = decodedUnits[i];
-            if (unit.Kind == "sheetName") continue;
+            if (unit.Kind == OfficeUnitKinds.SheetName) continue;
 
             if (OfficeTextBindings.Changed(unit, decoded))
             {
@@ -110,7 +110,7 @@ public sealed class ExcelTranslationApplier
             cancellationToken.ThrowIfCancellationRequested();
             var unit = patch.Plan.Units[i];
             var decoded = patch.DecodedUnits[i];
-            if (unit.Kind == "sheetName") continue;
+            if (unit.Kind == OfficeUnitKinds.SheetName) continue;
 
             if (!OfficeTextBindings.Changed(unit, decoded))
             {

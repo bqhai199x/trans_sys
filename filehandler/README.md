@@ -42,7 +42,7 @@ Import có `debug=true` trả thêm skip info trong metadata và hai part:
 
 `debug` chỉ có trên import; bỏ field hoặc gửi `false` trả JSON thông thường. `metadata.units` không xuất hiện trong JSON chính ở cả hai chế độ. `metadata.skipped` luôn trả warning; chỉ import có `debug=true` mới trả thêm info. Export và discovery không nhận debug, không trả skip info. Lỗi toàn tác vụ luôn là JSON, không đính kèm mapping kể cả đã gửi `debug=true`.
 
-`debug=false` bỏ qua việc tạo danh sách unit public và chuỗi đường dẫn vị trí cho danh sách này ngay trong service, đồng thời không serialize hoặc gửi `units.json`. Mapping nội bộ, số lượng unit và thông tin cần kiểm tra vùng bảo toàn vẫn được thu thập đầy đủ; info được lọc khỏi kết quả service khi debug=false, sau khi validation hoàn tất. Export cũng không tạo danh sách unit public. Cờ này điều khiển mapping chẩn đoán và skip info trong response; không bật log server hay trả thêm chi tiết exception.
+`debug=false` bỏ qua việc tạo danh sách unit public và chuỗi đường dẫn vị trí cho danh sách này ngay trong service, đồng thời không serialize hoặc gửi `units.json`. Với Office, extraction cũng không tạo `SkipMetadata` hoặc chuỗi đường dẫn chẩn đoán cho skip info bị ẩn; vẫn giữ số đếm và tọa độ tối thiểu để validation kiểm tra chính xác vùng bảo toàn. Mapping nội bộ và warning được thu thập đầy đủ. Export dùng cùng cách thu thập gọn và không tạo danh sách unit public. Cờ này điều khiển mapping chẩn đoán và skip info trong response; không bật log server hay trả thêm chi tiết exception.
 
 Khi gọi service trực tiếp, `ImportAsync(stream, cancellationToken)` mặc định không có `Metadata.Units`. Muốn lấy mapping, dùng `ImportAsync(stream, debug: true, cancellationToken: cancellationToken)`; overload có selection cũng nhận `debug` trước `cancellationToken`.
 
@@ -169,11 +169,13 @@ Metadata import có `sheets`/`slides`, thêm `selected` và khoảng `[unitStart
 
 Mỗi worksheet được chọn có unit Plain `sheetName` **đầu vùng**, kể cả sheet rỗng. Ví dụ sheet `Sales` có ô `Hello`: `texts=["Sales", "Hello"]`. Không dùng tên để nhận diện; mapping liên kết bằng `sheetId`.
 
-Tên mới được trim, thay ký tự cấm/control bằng `_`, bỏ nháy đơn đầu/cuối, giới hạn 31 UTF-16 code unit không cắt đôi surrogate pair. Rỗng sau normalize dùng `Sheet`; `History` thêm `_`; trùng tên không phân biệt hoa thường thêm ` (2)`, ` (3)` trong giới hạn. Bản dịch rỗng trước normalize giữ tên nguồn và ghi warning.
+Tên mới được trim, thay ký tự cấm/control bằng `_`, bỏ nháy đơn đầu/cuối, giới hạn 31 UTF-16 code unit không cắt đôi surrogate pair. Rỗng sau normalize dùng `Sheet`; `History` thêm `_`; trùng tên không phân biệt hoa thường thêm ` (2)`, ` (3)` trong giới hạn. Bản dịch rỗng trước normalize giữ tên nguồn và ghi warning. Surrogate lỗi hoặc tên sau normalize chứa ký tự XML 1.0 cấm sẽ giữ tên nguồn với `invalid_translation`; các ô hợp lệ vẫn được dịch.
 
-Rename cập nhật qualifier qua tokenizer trong công thức ô, defined name, table formula, conditional formatting/data validation, chart formula và hyperlink nội bộ được nhận diện. Giữ string literal và cấu trúc shared/array formula. Tính từ bảng tên nguồn để hỗ trợ đổi chéo tên.
+Rename cập nhật qualifier qua tokenizer trong công thức ô, defined name, table formula, conditional formatting/data validation (gồm ngưỡng `cfvo` có `type="formula"`), chart formula và hyperlink nội bộ được nhận diện. Giữ string literal, tên cột trong structured reference và cấu trúc shared/array formula. Hyperlink sang workbook khác giữ nguyên `location`. Tính từ bảng tên nguồn để hỗ trợ đổi chéo tên.
 
 Dynamic/3D/external reference, pivot và extension chưa chứng minh được an toàn khiến rename liên quan được giữ nguyên; khi không xác định chắc phạm vi ảnh hưởng, giữ các rename của workbook. Nội dung ô vẫn được dịch. `sheetNameChanges` của export ghi `sheetId`, `originalName`, `requestedName`, `finalName`, kể cả rename bị skip.
+
+VML/control, shape liên kết ô, data consolidation và hyperlink có đích dạng `#...` trong relationship hiện chặn rename với `unsafe_sheet_reference`. Đây là cơ chế giữ tên khi chưa phân tích được các dạng tham chiếu này; workbook chỉ dùng VML cho comment cũng có thể bị chặn rename. Structured reference có ngoặc hoặc escape không xác định được an toàn cũng giữ tên nguồn.
 
 Với tham chiếu 3D tĩnh, hệ thống nhận diện cả khoảng sheet theo thứ tự nguồn và giữ tên các sheet liên quan; sheet độc lập vẫn có thể đổi tên. Collision được tính lại sau khi quyết định tên nào phải giữ nguyên.
 
@@ -244,10 +246,8 @@ Sau thay đổi mapping/token hoặc khi dùng file xuất làm nguồn mới, *
 
 Giữ cấu hình `FileHandling`, `OfficeProcessing` và các giới hạn tài nguyên hiện có. `MaxConcurrentRequests` áp dụng chung cho import/export/discovery, admission trước khi đọc multipart. Warning không vô hiệu hóa quota, cancellation hoặc stream ownership.
 
-Xem [kết quả benchmark](docs/metadata-performance.md). Công cụ tại `tools/MetadataBenchmark` đo Release, không đặt ngưỡng thời gian vào unit test:
+Office tái sử dụng hash payload và baseline lỗi schema trong từng request; output vẫn được validate, hash và đối chiếu edit mask. Snapshot không giữ DOM hoặc cache giữa các request. Khi gọi lớp nguồn trực tiếp, `OfficeSource` sao chép buffer đầu vào và mỗi lần đọc `OriginalBytes` trả một bản sao độc lập.
 
-```powershell
-dotnet run --project tools/MetadataBenchmark -c Release -- <fixture-directory> 7
-```
+CI tại [filehandler.yml](../.github/workflows/filehandler.yml) build với XML documentation và chạy test C# cùng JavaScript. Quy tắc comment theo [AGENTS.md](../AGENTS.md); các yêu cầu về phạm vi thành viên, thứ tự param/typeparam, nội dung và định dạng cần được rà soát khi review code.
 
 Kiểm thử parser multipart và preview giới hạn: `node --test tests/swagger-multipart.test.cjs tests/swagger-response.test.cjs`.

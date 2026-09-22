@@ -53,13 +53,13 @@ public sealed class WordExtractor : IWordExtractor
     /// <returns>Extraction plan.</returns>
     public WordPlan Analyze(OfficeSource source, OfficeInventory inventory, CancellationToken cancellationToken)
     {
-        using var ms = new MemoryStream(source.OriginalBytes);
+        using var ms = new MemoryStream(source.Bytes);
         using var doc = WordprocessingDocument.Open(ms, false, OfficeTextBindings.Settings(_options));
 
         if (doc.MainDocumentPart is null)
             throw new InvalidDataException("Word document missing main document part.");
 
-        var exclusions = new WordExclusions();
+        var exclusions = new WordExclusions(source);
         source.ProcessingMetadata = FileMetadata.Create("word") with { Skipped = exclusions.Skipped };
 
         var units = new OfficeUnitCollection(_options, _codec.MaxUnits);

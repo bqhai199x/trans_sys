@@ -1,5 +1,6 @@
 using System.Text;
 using FileHandler.Api.Common;
+using FileHandler.Api.Modules.Excel;
 
 namespace FileHandler.Api.Modules.Office;
 
@@ -141,11 +142,16 @@ public sealed class OfficeTextCodec
                     break;
                 }
 
-                if (unit.Kind == "sheetName" && !string.IsNullOrWhiteSpace(rawText))
+                if (unit.Kind == OfficeUnitKinds.SheetName && !string.IsNullOrWhiteSpace(rawText))
                 {
                     try
                     {
                         Utf8TextReader.GetByteCount(rawText.AsSpan());
+                        if (!IsValidUnicodeAndXml(ExcelRenamePlanner.Normalize(rawText)))
+                        {
+                            errors.Add(new(SkipCodes.InvalidTranslation, ProcessingMessages.InvalidXmlText) { Index = i });
+                            continue;
+                        }
                         decodedUnits[i] = new(i, rawText, [rawText]);
                     }
                     catch (EncoderFallbackException)
