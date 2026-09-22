@@ -33,7 +33,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         using var response = await client.SendAsync(request, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(JsonValueKind.Array, json.RootElement.ValueKind);
+        Assert.Equal(JsonValueKind.Object, json.RootElement.ValueKind);
     }
 
     /// <summary>
@@ -72,8 +72,8 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         using var form = Form("guide.md", "# Hello", "[\"Xin chào\"]");
         var response = await _client.PostAsync("/api/markdown/export", form);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("guide.md", response.Content.Headers.ContentDisposition?.FileNameStar);
-        Assert.Equal("# Xin chào", await response.Content.ReadAsStringAsync());
+        Assert.Equal("guide.md", (await MultipartResponse.ReadAsync(response)).FileName);
+        Assert.Equal("# Xin chào", (await MultipartResponse.ReadAsync(response)).Text);
     }
 
     /// <summary>
@@ -86,7 +86,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         using var badJson = Form("guide.md", "Hi", "not json");
         var first = await _client.PostAsync("/api/markdown/export", badJson);
         Assert.Equal(HttpStatusCode.BadRequest, first.StatusCode);
-        Assert.Equal(JsonValueKind.Array, JsonDocument.Parse(await first.Content.ReadAsStringAsync()).RootElement.ValueKind);
+        Assert.Equal(JsonValueKind.Object, JsonDocument.Parse(await first.Content.ReadAsStringAsync()).RootElement.ValueKind);
 
         using var wrongType = Form("guide.md.exe", "Hi");
         var second = await _client.PostAsync("/api/markdown/import", wrongType);
@@ -105,8 +105,8 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(HttpStatusCode.UnsupportedMediaType, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(body);
-        Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
-        Assert.Equal("unsupported_media_type", doc.RootElement[0].GetProperty("code").GetString());
+        Assert.Equal(JsonValueKind.Object, doc.RootElement.ValueKind);
+        Assert.Equal("unsupported_media_type", doc.RootElement.GetProperty("errors")[0].GetProperty("code").GetString());
     }
 
     /// <summary>
@@ -121,8 +121,8 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         var body = await response.Content.ReadAsStringAsync();
         using var doc = JsonDocument.Parse(body);
-        Assert.Equal(JsonValueKind.Array, doc.RootElement.ValueKind);
-        Assert.Equal("invalid_json", doc.RootElement[0].GetProperty("code").GetString());
+        Assert.Equal(JsonValueKind.Object, doc.RootElement.ValueKind);
+        Assert.Equal("invalid_json", doc.RootElement.GetProperty("errors")[0].GetProperty("code").GetString());
     }
 
     /// <summary>
@@ -162,6 +162,12 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
             .GetProperty("texts");
 
         Assert.Equal("textarea", exportProp.GetProperty("format").GetString());
+        foreach (var path in new[] { "/api/excel/sheets", "/api/powerpoint/slides" })
+        {
+            var properties = json.RootElement.GetProperty("paths").GetProperty(path).GetProperty("post")
+                .GetProperty("requestBody").GetProperty("content").GetProperty("multipart/form-data").GetProperty("schema").GetProperty("properties");
+            Assert.Equal("file", Assert.Single(properties.EnumerateObject()).Name);
+        }
     }
 
     /// <summary>
@@ -175,7 +181,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         using var form = Form("guide.md", "# Heading\n\nBody paragraph", multilineJson);
         var response = await _client.PostAsync("/api/markdown/export", form, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var content = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var content = (await MultipartResponse.ReadAsync(response)).Text;
         Assert.Equal("# Tiêu đề dịch\n\nĐoạn văn dịch", content);
     }
 
@@ -197,7 +203,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
 
         var response = await _client.PostAsync("/api/markdown/export", form, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        var content = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        var content = (await MultipartResponse.ReadAsync(response)).Text;
         Assert.Equal("# Nguồn\n\nVăn bản", content);
     }
 
@@ -241,10 +247,9 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
             form.Add(new StringContent(json), "texts");
         using var response = await _client.PostAsync("/api/plaintext/export", form);
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("text/plain", response.Content.Headers.ContentType?.MediaType);
-        Assert.Equal("utf-8", response.Content.Headers.ContentType?.CharSet);
-        Assert.Equal("guide.TXT", response.Content.Headers.ContentDisposition?.FileNameStar);
-        Assert.Equal(Utf8TextReader.Encode("# Xin chào\nDòng mới\r\n\r\n<keepme01> **Thế giới**\r\n", true), await response.Content.ReadAsByteArrayAsync());
+        Assert.Equal("text/plain; charset=utf-8", (await MultipartResponse.ReadAsync(response)).ContentType);
+        Assert.Equal("guide.TXT", (await MultipartResponse.ReadAsync(response)).FileName);
+        Assert.Equal(Utf8TextReader.Encode("# Xin chào\nDòng mới\r\n\r\n<keepme01> **Thế giới**\r\n", true), (await MultipartResponse.ReadAsync(response)).Bytes);
     }
 
     /// <summary>
@@ -261,19 +266,19 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
     [InlineData("[\"\\uD800\"]", 400, "invalid_json")]
     [InlineData("[]", 422, "translation_count_mismatch")]
     [InlineData("[\" \t\"]", 400, "invalid_json")]
-    [InlineData("[\"\"]", 422, "empty_translation")]
+    [InlineData("[\"\"]", 200, "Source")]
     public async Task PlainTextUsesExistingJsonAndErrorContracts(string json, int status, string expected)
     {
         using var form = Form("guide.txt", "Source", json);
         using var response = await _client.PostAsync("/api/plaintext/export", form);
         Assert.Equal(status, (int)response.StatusCode);
         if (status == 200)
-            Assert.Equal(expected, await response.Content.ReadAsStringAsync());
+            Assert.Equal(expected, (await MultipartResponse.ReadAsync(response)).Text);
         else
         {
             Assert.Equal("application/json", response.Content.Headers.ContentType?.MediaType);
             using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-            Assert.Equal(expected, body.RootElement[0].GetProperty("code").GetString());
+            Assert.Equal(expected, body.RootElement.GetProperty("errors")[0].GetProperty("code").GetString());
         }
     }
 
@@ -292,8 +297,8 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         form.Add(new StringContent("[]"), "texts");
         using var response = await _client.PostAsync(path, form);
         Assert.Equal(HttpStatusCode.UnprocessableEntity, response.StatusCode);
-        var errors = JsonSerializer.Deserialize<FileError[]>(await response.Content.ReadAsStringAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
-        Assert.Equal("invalid_encoding", Assert.Single(errors!).Code);
+        var errors = JsonSerializer.Deserialize<FileResponse>(await response.Content.ReadAsStringAsync(), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal("invalid_encoding", Assert.Single(errors!.Errors).Code);
     }
 
     /// <summary>
@@ -324,7 +329,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         using var response = await client.PostAsync("/api/plaintext/export", form);
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
         using var body = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        Assert.Equal(expected, body.RootElement[0].GetProperty("code").GetString());
+        Assert.Equal(expected, body.RootElement.GetProperty("errors")[0].GetProperty("code").GetString());
         if (limit is "file" or "multipart" or "units")
         {
             using var import = Form("guide.txt", "Source");
@@ -345,12 +350,12 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
         var paths = document.RootElement.GetProperty("paths");
         var plainContent = paths.GetProperty("/api/plaintext/export").GetProperty("post").GetProperty("responses").GetProperty("200").GetProperty("content");
-        Assert.True(plainContent.TryGetProperty("text/plain", out _));
-        Assert.Equal("binary", plainContent.GetProperty("text/plain").GetProperty("schema").GetProperty("format").GetString());
+        Assert.True(plainContent.TryGetProperty("multipart/mixed", out _));
+        Assert.Equal("binary", plainContent.GetProperty("multipart/mixed").GetProperty("schema").GetProperty("format").GetString());
 
         var mdContent = paths.GetProperty("/api/markdown/export").GetProperty("post").GetProperty("responses").GetProperty("200").GetProperty("content");
-        Assert.True(mdContent.TryGetProperty("text/markdown", out _));
-        Assert.Equal("binary", mdContent.GetProperty("text/markdown").GetProperty("schema").GetProperty("format").GetString());
+        Assert.True(mdContent.TryGetProperty("multipart/mixed", out _));
+        Assert.Equal("binary", mdContent.GetProperty("multipart/mixed").GetProperty("schema").GetProperty("format").GetString());
 
         var errorContent = paths.GetProperty("/api/plaintext/export").GetProperty("post").GetProperty("responses").GetProperty("422").GetProperty("content");
         Assert.True(errorContent.TryGetProperty("application/json", out _));
@@ -398,7 +403,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         using var exportForm = Form("Guide.MD", source, JsonSerializer.Serialize(new[] { imported.Texts[0].Replace(">red<", ">đỏ<") }));
         using var exported = await _client.PostAsync("/api/markdown/export", exportForm);
         Assert.Equal(HttpStatusCode.OK, exported.StatusCode);
-        Assert.Equal("Guide.MD", exported.Content.Headers.ContentDisposition?.FileNameStar);
-        Assert.Equal("Before **đỏ** after `code`", await exported.Content.ReadAsStringAsync());
+        Assert.Equal("Guide.MD", (await MultipartResponse.ReadAsync(exported)).FileName);
+        Assert.Equal("Before **đỏ** after `code`", (await MultipartResponse.ReadAsync(exported)).Text);
     }
 }

@@ -71,7 +71,7 @@ public sealed class FilesControllerTests
     {
         var response = Assert.IsAssignableFrom<ObjectResult>(result);
         Assert.Equal(status, response.StatusCode);
-        var errors = Assert.IsAssignableFrom<IReadOnlyList<FileError>>(response.Value);
+        var errors = Assert.IsType<FileResponse>(response.Value).Errors;
         Assert.Equal(code, Assert.Single(errors).Code);
     }
 
@@ -109,11 +109,11 @@ public sealed class FilesControllerTests
     public async Task Export_ReturnsDownloadWithSafeName()
     {
         var controller = CreateMarkdown();
-        var result = Assert.IsType<FileContentResult>(await controller.Export(new MarkdownExportRequest { File = FileUpload("../../guide.md"), Texts = "[\"Bonjour\"]" }, default));
-        Assert.Equal("Bonjour", Encoding.UTF8.GetString(result.FileContents));
-        Assert.Equal(MarkdownService.ContentType, result.ContentType);
-        Assert.Equal("guide.md", result.FileDownloadName);
-        Assert.True(controller.Response.Headers.ContainsKey("X-File-Metadata"));
+        var result = Assert.IsType<MultipartFileResult>(await controller.Export(new MarkdownExportRequest { File = FileUpload("../../guide.md"), Texts = "[\"Bonjour\"]" }, default));
+        Assert.Equal("Bonjour", Encoding.UTF8.GetString(result.Result.Content!));
+        Assert.Equal(MarkdownService.ContentType, result.Result.ContentType);
+        Assert.Equal("guide.md", result.FileName);
+        Assert.False(controller.Response.Headers.ContainsKey("X-File-Metadata"));
     }
 
     /// <summary>
@@ -123,8 +123,8 @@ public sealed class FilesControllerTests
     [Fact]
     public async Task Export_AcceptsLenientJsonWithNewlinesAndTrailingCommas()
     {
-        var result = Assert.IsType<FileContentResult>(await CreateMarkdown().Export(new MarkdownExportRequest { File = FileUpload(), Texts = "[\n  \"Hello\nWorld\",\n]" }, default));
-        Assert.Equal("Hello\nWorld", Encoding.UTF8.GetString(result.FileContents));
+        var result = Assert.IsType<MultipartFileResult>(await CreateMarkdown().Export(new MarkdownExportRequest { File = FileUpload(), Texts = "[\n  \"Hello\nWorld\",\n]" }, default));
+        Assert.Equal("Hello\nWorld", Encoding.UTF8.GetString(result.Result.Content!));
     }
 
     /// <summary>
@@ -174,7 +174,7 @@ public sealed class FilesControllerTests
         if (limit == "output") options.MaxOutputBytes = 1;
         var result = Assert.IsType<ObjectResult>(await CreateMarkdown(options).Export(new MarkdownExportRequest { File = FileUpload(), Texts = "[\"Bonjour\"]" }, default));
         Assert.Equal(413, result.StatusCode);
-        Assert.Contains(Assert.IsAssignableFrom<IReadOnlyList<FileError>>(result.Value), x => x.Code == code);
+        Assert.Contains(Assert.IsType<FileResponse>(result.Value).Errors, x => x.Code == code);
     }
 
     /// <summary>
@@ -198,7 +198,7 @@ public sealed class FilesControllerTests
     {
         var result = Assert.IsType<BadRequestObjectResult>(await CreateMarkdown().Export(new MarkdownExportRequest { File = FileUpload(), Texts = "[\"\\uD800\"]" }, default));
         Assert.Equal(400, result.StatusCode);
-        Assert.Contains(Assert.IsAssignableFrom<IReadOnlyList<FileError>>(result.Value), x => x.Code == "invalid_json");
+        Assert.Contains(Assert.IsType<FileResponse>(result.Value).Errors, x => x.Code == "invalid_json");
     }
 
     /// <summary>
@@ -209,8 +209,8 @@ public sealed class FilesControllerTests
     public async Task Export_AcceptsJsonWithCommentsAndRawNewlines()
     {
         var jsonWithComments = "[/* \"comment\" */ \"Line 1\nLine 2\"]";
-        var result = Assert.IsType<FileContentResult>(await CreatePlainText().Export(new PlainTextExportRequest { File = FileUpload("guide.txt", Encoding.UTF8.GetBytes("Line 1\nLine 2")), Texts = jsonWithComments }, default));
-        Assert.NotNull(result.FileContents);
+        var result = Assert.IsType<MultipartFileResult>(await CreatePlainText().Export(new PlainTextExportRequest { File = FileUpload("guide.txt", Encoding.UTF8.GetBytes("Line 1\nLine 2")), Texts = jsonWithComments }, default));
+        Assert.NotNull(result.Result.Content!);
     }
 }
 

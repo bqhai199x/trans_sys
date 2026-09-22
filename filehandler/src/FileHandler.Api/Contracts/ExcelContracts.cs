@@ -10,22 +10,22 @@ public sealed class ExcelImportRequest
 {
 
     /// <summary>
+    /// Whether to return informational skips and units.json; false by default.
+    /// </summary>
+    [FromForm(Name = "debug")]
+    public bool Debug { get; init; }
+
+    /// <summary>
     /// Uploaded Excel source file (.xlsx).
     /// </summary>
     [FromForm(Name = "file")]
     public IFormFile? File { get; init; }
-}
-
-/// <summary>
-/// Structural and formatting metadata for an Excel spreadsheet.
-/// </summary>
-public sealed class ExcelMetadata
-{
 
     /// <summary>
-    /// Total number of extracted translation units.
+    /// Native IDs as JSON string array; omitted or blank selects visible content.
     /// </summary>
-    public int UnitCount { get; init; }
+    [FromForm(Name = "sheetIds")]
+    public string? SheetIds { get; init; }
 }
 
 /// <summary>
@@ -36,7 +36,7 @@ public sealed class ExcelMetadata
 /// <param name="Errors">Validation errors encountered during import.</param>
 public sealed record ExcelImportResponse(
     IReadOnlyList<string> Texts,
-    ExcelMetadata? Metadata,
+    FileMetadata Metadata,
     IReadOnlyList<FileError> Errors);
 
 /// <summary>
@@ -50,6 +50,12 @@ public sealed class ExcelExportRequest
     /// </summary>
     [FromForm(Name = "file")]
     public IFormFile? File { get; init; }
+
+    /// <summary>
+    /// Native IDs as JSON string array; omitted or blank selects visible content.
+    /// </summary>
+    [FromForm(Name = "sheetIds")]
+    public string? SheetIds { get; init; }
 
     /// <summary>
     /// Translated texts as JSON array string or uploaded file.

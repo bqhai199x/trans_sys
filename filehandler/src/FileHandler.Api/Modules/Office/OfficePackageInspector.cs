@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Xml;
@@ -34,7 +35,7 @@ public sealed class OfficePackageInspector
     /// <exception cref="InvalidOperationException">Package structure or relationship graph violates limits or integrity.</exception>
     public OfficeInventory Inspect(OfficeSource source, CancellationToken cancellationToken)
     {
-        using var zip = new ZipArchive(new MemoryStream(source.OriginalBytes), ZipArchiveMode.Read, false);
+        using var zip = new ZipArchive(new MemoryStream(source.Bytes), ZipArchiveMode.Read, false);
 
         var contentTypes = ParseContentTypes(zip);
         var parts = new List<OfficePartInfo>();
@@ -115,6 +116,7 @@ public sealed class OfficePackageInspector
         var objects = new List<OfficeObject>();
         var diagnostics = new List<OfficeDiagnostic>();
 
+        source.PayloadHashes = parts.ToFrozenDictionary(p => p.PartUri, p => p.PayloadHash, StringComparer.OrdinalIgnoreCase);
         return new OfficeInventory(parts, relationships, objects, diagnostics);
     }
 

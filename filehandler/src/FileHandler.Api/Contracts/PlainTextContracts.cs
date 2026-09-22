@@ -10,32 +10,16 @@ public sealed class PlainTextImportRequest
 {
 
     /// <summary>
+    /// Whether to return informational skips and units.json; false by default.
+    /// </summary>
+    [FromForm(Name = "debug")]
+    public bool Debug { get; init; }
+
+    /// <summary>
     /// Uploaded plain text source file.
     /// </summary>
     [FromForm(Name = "file")]
     public IFormFile? File { get; init; }
-}
-
-/// <summary>
-/// Structural and formatting metadata for a plain text document.
-/// </summary>
-public sealed class PlainTextMetadata
-{
-
-    /// <summary>
-    /// Detected encoding format description.
-    /// </summary>
-    public string Encoding { get; init; } = "utf-8";
-
-    /// <summary>
-    /// Whether file begins with UTF-8 byte order mark.
-    /// </summary>
-    public bool HasBom { get; init; }
-
-    /// <summary>
-    /// Total number of extracted paragraphs.
-    /// </summary>
-    public int ParagraphCount { get; init; }
 }
 
 /// <summary>
@@ -46,7 +30,7 @@ public sealed class PlainTextMetadata
 /// <param name="Errors">Validation errors encountered during import.</param>
 public sealed record PlainTextImportResponse(
     IReadOnlyList<string> Texts,
-    PlainTextMetadata? Metadata,
+    FileMetadata Metadata,
     IReadOnlyList<FileError> Errors);
 
 /// <summary>

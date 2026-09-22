@@ -14,7 +14,7 @@ namespace FileHandler.Tests.Modules.Office;
 /// <summary>
 /// Programmatic test fixture generator for valid and invalid Office Open XML documents.
 /// </summary>
-internal static class OfficeFixtureFactory
+internal static partial class OfficeFixtureFactory
 {
 
     /// <summary>

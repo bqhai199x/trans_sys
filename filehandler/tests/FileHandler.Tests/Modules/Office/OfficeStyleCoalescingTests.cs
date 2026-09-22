@@ -1,3 +1,4 @@
+using static FileHandler.Tests.Modules.Office.OfficeTranslationTestData;
 using DocumentFormat.OpenXml.Packaging;
 using FileHandler.Api.Common;
 using FileHandler.Api.Modules.Office;
@@ -53,15 +54,15 @@ public sealed class OfficeStyleCoalescingTests
         }
         var source = buffer.ToArray();
         var service = Service("pptx");
-        var imported = await service.ImportAsync(new MemoryStream(source));
+        var imported = await service.ImportAsync(new MemoryStream(source), true, default);
         Assert.Empty(imported.Errors);
         Assert.Equal(inheritedBold
             ? "<ox:r0>Track</ox:r0><ox:r1>2：JAVA21/25互換</ox:r1><ox:r2>対応</ox:r2>"
-            : "Track2：JAVA21/25互換対応", Assert.Single(imported.Texts));
+            : "Track2：JAVA21/25互換対応", Assert.Single(ContentTexts(imported)));
         var translation = inheritedBold
             ? "<ox:r0>Track</ox:r0><ox:r1>2: Hỗ trợ tương thích JAVA21/25</ox:r1><ox:r2></ox:r2>"
             : "Track2: Hỗ trợ tương thích JAVA21/25";
-        var exported = await service.ExportAsync(new MemoryStream(source), [translation]);
+        var exported = await ExportContentAsync(service, source, [translation]);
         Assert.Empty(exported.Errors);
         using var result = PresentationDocument.Open(new MemoryStream(exported.Content!), false);
         Assert.Equal("Track2: Hỗ trợ tương thích JAVA21/25",
@@ -69,7 +70,7 @@ public sealed class OfficeStyleCoalescingTests
     }
 
     /// <summary>
-    /// Checks empty translated slots clear original text while wholly empty units fail.
+    /// Checks empty slots clear original text while wholly empty units retain source.
     /// </summary>
     /// <param name="format">Office filename extension.</param>
     /// <returns>Task completing after export and validation assertions.</returns>
@@ -81,16 +82,17 @@ public sealed class OfficeStyleCoalescingTests
     {
         var source = CreateRuns(format, ["Track", "2：JAVA21/25互換", "対応"], true);
         var service = Service(format);
-        var exported = await service.ExportAsync(new MemoryStream(source),
-            ["<ox:r0>Track</ox:r0><ox:r1>2: Hỗ trợ tương thích JAVA21/25</ox:r1><ox:r2></ox:r2>"]);
+        var exported = await ExportContentAsync(service, source, ["<ox:r0>Track</ox:r0><ox:r1>2: Hỗ trợ tương thích JAVA21/25</ox:r1><ox:r2></ox:r2>"]);
         Assert.Empty(exported.Errors);
-        var reimported = await service.ImportAsync(new MemoryStream(exported.Content!));
+        var reimported = await service.ImportAsync(new MemoryStream(exported.Content!), true, default);
         Assert.Empty(reimported.Errors);
-        Assert.Equal("<ox:r0>Track</ox:r0><ox:r1>2: Hỗ trợ tương thích JAVA21/25</ox:r1>", Assert.Single(reimported.Texts));
-        var empty = await service.ExportAsync(new MemoryStream(source), ["<ox:r0></ox:r0><ox:r1> </ox:r1><ox:r2></ox:r2>"]);
-        Assert.Contains(empty.Errors, e => e.Code == "empty_translation");
-        var missing = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>Track</ox:r0><ox:r1>2</ox:r1>"]);
-        Assert.Contains(missing.Errors, e => e.Code == "office_token_mismatch");
+        Assert.Equal("<ox:r0>Track</ox:r0><ox:r1>2: Hỗ trợ tương thích JAVA21/25</ox:r1>", Assert.Single(ContentTexts(reimported)));
+        var empty = await ExportContentAsync(service, source, ["<ox:r0></ox:r0><ox:r1> </ox:r1><ox:r2></ox:r2>"]);
+        Assert.Equal(source, empty.Content);
+        Assert.Contains(empty.Metadata.Skipped, e => e.Code == "empty_translation");
+        var missing = await ExportContentAsync(service, source, ["<ox:r0>Track</ox:r0><ox:r1>2</ox:r1>"]);
+        Assert.Equal(source, missing.Content);
+        Assert.Contains(missing.Metadata.Skipped, e => e.Code == "office_token_mismatch");
     }
 
     /// <summary>
@@ -106,18 +108,18 @@ public sealed class OfficeStyleCoalescingTests
     {
         var bytes = CreateDate(format);
         var service = Service(format);
-        var imported = await service.ImportAsync(new MemoryStream(bytes));
+        var imported = await service.ImportAsync(new MemoryStream(bytes), true, default);
         Assert.Empty(imported.Errors);
-        Assert.Equal("2026年3月31日", Assert.Single(imported.Texts));
+        Assert.Equal("2026年3月31日", Assert.Single(ContentTexts(imported)));
         var identity = await service.ExportAsync(new MemoryStream(bytes), imported.Texts);
         Assert.Empty(identity.Errors);
         Assert.Equal(bytes, identity.Content);
         const string translation = "ngày 31 tháng 3 năm 2026";
-        var exported = await service.ExportAsync(new MemoryStream(bytes), [translation]);
+        var exported = await ExportContentAsync(service, bytes, [translation]);
         Assert.Empty(exported.Errors);
-        var reimported = await service.ImportAsync(new MemoryStream(exported.Content!));
+        var reimported = await service.ImportAsync(new MemoryStream(exported.Content!), true, default);
         Assert.Empty(reimported.Errors);
-        Assert.Equal(translation, Assert.Single(reimported.Texts));
+        Assert.Equal(translation, Assert.Single(ContentTexts(reimported)));
     }
 
     /// <summary>
@@ -131,9 +133,9 @@ public sealed class OfficeStyleCoalescingTests
     [InlineData("xlsx")]
     public async Task BoldDateFragment_RemainsSeparate(string format)
     {
-        var imported = await Service(format).ImportAsync(new MemoryStream(CreateDate(format, true)));
+        var imported = await Service(format).ImportAsync(new MemoryStream(CreateDate(format, true)), true, default);
         Assert.Empty(imported.Errors);
-        Assert.Equal("<ox:r0>2026</ox:r0><ox:r1>年</ox:r1><ox:r2>3月31日</ox:r2>", Assert.Single(imported.Texts));
+        Assert.Equal("<ox:r0>2026</ox:r0><ox:r1>年</ox:r1><ox:r2>3月31日</ox:r2>", Assert.Single(ContentTexts(imported)));
     }
 
     /// <summary>
@@ -149,18 +151,18 @@ public sealed class OfficeStyleCoalescingTests
     {
         var source = CreateRuns(format, [".NET", " ", "Framework/JAVA", "換装について"]);
         var service = Service(format);
-        var imported = await service.ImportAsync(new MemoryStream(source));
+        var imported = await service.ImportAsync(new MemoryStream(source), true, default);
         Assert.Empty(imported.Errors);
-        Assert.Equal(".NET Framework/JAVA換装について", Assert.Single(imported.Texts));
+        Assert.Equal(".NET Framework/JAVA換装について", Assert.Single(ContentTexts(imported)));
         var identity = await service.ExportAsync(new MemoryStream(source), imported.Texts);
         Assert.Empty(identity.Errors);
         Assert.Equal(source, identity.Content);
         const string translation = "Về việc chuyển đổi .NET Framework/JAVA";
-        var exported = await service.ExportAsync(new MemoryStream(source), [translation]);
+        var exported = await ExportContentAsync(service, source, [translation]);
         Assert.Empty(exported.Errors);
-        var reimported = await service.ImportAsync(new MemoryStream(exported.Content!));
+        var reimported = await service.ImportAsync(new MemoryStream(exported.Content!), true, default);
         Assert.Empty(reimported.Errors);
-        Assert.Equal(translation, Assert.Single(reimported.Texts));
+        Assert.Equal(translation, Assert.Single(ContentTexts(reimported)));
     }
 
     /// <summary>
@@ -176,14 +178,14 @@ public sealed class OfficeStyleCoalescingTests
     {
         var source = CreateRuns(format, ["A", " ", "B"], true);
         var service = Service(format);
-        var imported = await service.ImportAsync(new MemoryStream(source));
+        var imported = await service.ImportAsync(new MemoryStream(source), true, default);
         Assert.Empty(imported.Errors);
-        Assert.Equal("<ox:r0>A</ox:r0><ox:k0/><ox:r1>B</ox:r1>", Assert.Single(imported.Texts));
-        var exported = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>X</ox:r0><ox:k0/><ox:r1>Y</ox:r1>"]);
+        Assert.Equal("<ox:r0>A</ox:r0><ox:k0/><ox:r1>B</ox:r1>", Assert.Single(ContentTexts(imported)));
+        var exported = await ExportContentAsync(service, source, ["<ox:r0>X</ox:r0><ox:k0/><ox:r1>Y</ox:r1>"]);
         Assert.Empty(exported.Errors);
-        var reimported = await service.ImportAsync(new MemoryStream(exported.Content!));
+        var reimported = await service.ImportAsync(new MemoryStream(exported.Content!), true, default);
         Assert.Empty(reimported.Errors);
-        Assert.Equal("<ox:r0>X</ox:r0><ox:k0/><ox:r1>Y</ox:r1>", Assert.Single(reimported.Texts));
+        Assert.Equal("<ox:r0>X</ox:r0><ox:k0/><ox:r1>Y</ox:r1>", Assert.Single(ContentTexts(reimported)));
     }
 
     /// <summary>
@@ -196,9 +198,9 @@ public sealed class OfficeStyleCoalescingTests
     [InlineData("\n")]
     public async Task SpreadsheetControlRun_RemainsProtected(string control)
     {
-        var imported = await Service("xlsx").ImportAsync(new MemoryStream(CreateRuns("xlsx", ["A", control, "B"])));
+        var imported = await Service("xlsx").ImportAsync(new MemoryStream(CreateRuns("xlsx", ["A", control, "B"])), true, default);
         Assert.Empty(imported.Errors);
-        Assert.Equal("<ox:r0>A</ox:r0><ox:k0/><ox:r1>B</ox:r1>", Assert.Single(imported.Texts));
+        Assert.Equal("<ox:r0>A</ox:r0><ox:k0/><ox:r1>B</ox:r1>", Assert.Single(ContentTexts(imported)));
     }
 
     /// <summary>

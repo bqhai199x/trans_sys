@@ -41,40 +41,52 @@ public sealed class OfficeDeepReviewTests
     }
 
     /// <summary>
-    /// Rejects text in Word continuation cells before exposing translation units.
+    /// Preserves Word continuation text while translating independent paragraphs.
     /// </summary>
     /// <param name="horizontal">Whether merge uses legacy horizontal representation.</param>
-    /// <returns>Task completing after profile rejection.</returns>
+    /// <returns>Task completing after preservation assertions.</returns>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Word_MergedFollowerText_IsRejected(bool horizontal)
+    public async Task Word_MergedFollowerText_IsSkipped(bool horizontal)
     {
         var properties = new W.TableCellProperties();
         if (horizontal) properties.Append(new W.HorizontalMerge());
         else properties.Append(new W.VerticalMerge());
         var cell = new W.TableCell(properties, new W.Paragraph(new W.Run(new W.Text("Hidden"))));
-        var bytes = OfficeFixtureFactory.CreateWordDocumentWithElements(OfficeFixtureFactory.MakeWordTable(cell));
+        var bytes = OfficeFixtureFactory.CreateWordDocumentWithElements(OfficeFixtureFactory.MakeWordTable(cell), OfficeFixtureFactory.WordParagraph("Visible"));
         var result = await WordService.Create().ImportAsync(new MemoryStream(bytes));
-        Assert.Contains(result.Errors, e => e.Code == "office_unsupported_content");
+        Assert.Empty(result.Errors);
+        Assert.Equal(new[] { "Visible" }, result.Texts);
+        Assert.Contains(result.Metadata.Skipped, e => e.Code == "merged_follower_text");
+        var exported = await WordService.Create().ExportAsync(new MemoryStream(bytes), ["Changed"]);
+        Assert.Empty(exported.Errors);
+        using var output = WordprocessingDocument.Open(new MemoryStream(exported.Content!), false);
+        Assert.Equal("HiddenChanged", output.MainDocumentPart!.Document!.Body!.InnerText);
     }
 
     /// <summary>
-    /// Rejects DrawingML horizontal and vertical continuation text.
+    /// Preserves DrawingML continuation text while translating owner cells.
     /// </summary>
     /// <param name="horizontal">Whether continuation is horizontal.</param>
-    /// <returns>Task completing after profile rejection.</returns>
+    /// <returns>Task completing after preservation assertions.</returns>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task PowerPoint_MergedFollowerText_IsRejected(bool horizontal)
+    public async Task PowerPoint_MergedFollowerText_IsSkipped(bool horizontal)
     {
         var cell = OfficeFixtureFactory.DrawingCell(new A.Paragraph(new A.Run(new A.Text("Hidden"))));
         if (horizontal) cell.HorizontalMerge = true;
         else cell.VerticalMerge = true;
-        var bytes = OfficeFixtureFactory.CreatePowerPointWithTable(new A.TableRow(cell) { Height = 400000 });
+        var bytes = OfficeFixtureFactory.CreatePowerPointWithTable(new A.TableRow(cell, OfficeFixtureFactory.DrawingCell(new A.Paragraph(new A.Run(new A.Text("Visible"))))) { Height = 400000 });
         var result = await PowerPointService.Create().ImportAsync(new MemoryStream(bytes));
-        Assert.Contains(result.Errors, e => e.Code == "office_unsupported_content");
+        Assert.Empty(result.Errors);
+        Assert.Equal(new[] { "Visible" }, result.Texts);
+        Assert.Contains(result.Metadata.Skipped, e => e.Code == "merged_follower_text");
+        var exported = await PowerPointService.Create().ExportAsync(new MemoryStream(bytes), ["Changed"]);
+        Assert.Empty(exported.Errors);
+        using var output = PresentationDocument.Open(new MemoryStream(exported.Content!), false);
+        Assert.Equal(new[] { "Hidden", "Changed" }, output.PresentationPart!.SlideParts.Single().Slide!.Descendants<A.Text>().Select(t => t.Text));
     }
 
     /// <summary>
@@ -101,7 +113,7 @@ public sealed class OfficeDeepReviewTests
             wb.Workbook!.Sheets!.Append(new S.Sheet { Id = wb.GetIdOfPart(hidden), SheetId = 2, Name = "Hidden", State = S.SheetStateValues.VeryHidden });
         }
         var source = buffer.ToArray();
-        var result = await ExcelService.Create().ExportAsync(new MemoryStream(source), ["Changed"]);
+        var result = await ExcelService.Create().ExportAsync(new MemoryStream(source), ["Sheet1", "Changed"]);
         Assert.Empty(result.Errors);
         var output = Assert.IsType<byte[]>(result.Content);
         Assert.Equal(ReadEntry(source, hiddenUri), ReadEntry(output, hiddenUri));

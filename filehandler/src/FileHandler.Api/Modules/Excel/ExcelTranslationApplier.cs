@@ -35,6 +35,7 @@ public sealed class ExcelTranslationApplier
             cancellationToken.ThrowIfCancellationRequested();
             var unit = plan.Units[i];
             var decoded = decodedUnits[i];
+            if (unit.Kind == OfficeUnitKinds.SheetName) continue;
 
             if (OfficeTextBindings.Changed(unit, decoded))
             {
@@ -83,9 +84,21 @@ public sealed class ExcelTranslationApplier
             wp => "/" + wp.Uri.ToString().TrimStart('/'),
             StringComparer.OrdinalIgnoreCase);
 
-        var cellsByPart = worksheetPartsByUri.Where(p => patch.EditMasks.ContainsKey(p.Key)).ToDictionary(p => p.Key,
-            p => p.Value.Worksheet!.Descendants<Cell>().ToDictionary(c => c.CellReference?.Value ?? throw new InvalidDataException("Implicit cell address is unsupported in selected worksheet."), StringComparer.Ordinal),
-            StringComparer.OrdinalIgnoreCase);
+        var neededCells = patch.Plan.Units.Where(u => u.Location.CellReference is not null && OfficeTextBindings.Changed(u, patch.DecodedUnits[u.Index]))
+            .GroupBy(u => u.Location.PartUri).ToDictionary(g => g.Key, g => g.Select(u => u.Location.CellReference!).ToHashSet(StringComparer.Ordinal), StringComparer.OrdinalIgnoreCase);
+        var cellsByPart = new Dictionary<string, Dictionary<string, Cell>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (partUri, addresses) in neededCells)
+        {
+            var cells = new Dictionary<string, Cell>(StringComparer.Ordinal);
+            foreach (var cell in worksheetPartsByUri[partUri].Worksheet!.Descendants<Cell>())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (cell.CellReference?.Value is not { } address || !addresses.Contains(address)) continue;
+                if (!cells.TryAdd(address, cell)) throw new InvalidDataException("Duplicate cell coordinates prevent safe translation.");
+            }
+            if (cells.Count != addresses.Count) throw new InvalidDataException("Translation cell coordinates cannot be resolved.");
+            cellsByPart.Add(partUri, cells);
+        }
         var drawingParts = workbookPart.WorksheetParts.Select(w => w.DrawingsPart).OfType<DrawingsPart>()
             .Distinct().ToDictionary(p => "/" + p.Uri.ToString().TrimStart('/'), StringComparer.OrdinalIgnoreCase);
         var originalItems = sst?.Elements<SharedStringItem>().ToArray();
@@ -97,6 +110,7 @@ public sealed class ExcelTranslationApplier
             cancellationToken.ThrowIfCancellationRequested();
             var unit = patch.Plan.Units[i];
             var decoded = patch.DecodedUnits[i];
+            if (unit.Kind == OfficeUnitKinds.SheetName) continue;
 
             if (!OfficeTextBindings.Changed(unit, decoded))
             {

@@ -164,11 +164,11 @@ public sealed class OfficeTextCodecAndBindingTests
     }
 
     /// <summary>
-    /// Verifies missing token is rejected with office_token_mismatch (CD08).
+    /// Verifies missing token retains source slots with office_token_mismatch (CD08).
     /// </summary>
     /// <returns>No return value.</returns>
     [Fact]
-    public void Decode_MissingToken_ReturnsInvalidTranslation()
+    public void Decode_MissingToken_PreservesSourceSlots()
     {
         var codec = new OfficeTextCodec(DefaultOfficeOptions, DefaultFileOptions);
         var unit = MakeUnit(
@@ -184,15 +184,18 @@ public sealed class OfficeTextCodecAndBindingTests
             OfficeFormat.Word,
             default);
 
-        Assert.Contains(result.Errors, e => e.Code == "office_token_mismatch");
+        Assert.Empty(result.Errors);
+        Assert.Equal(unit.EncodedSource, Assert.Single(result.DecodedUnits!).EncodedInput);
+        Assert.Equal(unit.Slots.Select(s => s.OriginalText), result.DecodedUnits![0].DecodedSlots);
+        Assert.Contains(result.Skipped, e => e.Code == "office_token_mismatch" && e.UnitIndex == 0);
     }
 
     /// <summary>
-    /// Verifies reordered tokens are rejected with office_token_mismatch (CD09).
+    /// Verifies reordered tokens retain source slots with office_token_mismatch (CD09).
     /// </summary>
     /// <returns>No return value.</returns>
     [Fact]
-    public void Decode_ReorderedTokens_ReturnsInvalidTranslation()
+    public void Decode_ReorderedTokens_PreservesSourceSlots()
     {
         var codec = new OfficeTextCodec(DefaultOfficeOptions, DefaultFileOptions);
         var unit = MakeUnit(
@@ -208,15 +211,18 @@ public sealed class OfficeTextCodecAndBindingTests
             OfficeFormat.Word,
             default);
 
-        Assert.Contains(result.Errors, e => e.Code == "office_token_mismatch");
+        Assert.Empty(result.Errors);
+        Assert.Equal(unit.EncodedSource, Assert.Single(result.DecodedUnits!).EncodedInput);
+        Assert.Equal(unit.Slots.Select(s => s.OriginalText), result.DecodedUnits![0].DecodedSlots);
+        Assert.Contains(result.Skipped, e => e.Code == "office_token_mismatch" && e.UnitIndex == 0);
     }
 
     /// <summary>
-    /// Verifies unclosed or malformed token syntax is rejected with office_token_mismatch (CD10).
+    /// Verifies malformed token syntax retains source slots with office_token_mismatch (CD10).
     /// </summary>
     /// <returns>No return value.</returns>
     [Fact]
-    public void Decode_MalformedTokenSyntax_ReturnsInvalidTranslation()
+    public void Decode_MalformedTokenSyntax_PreservesSourceSlots()
     {
         var codec = new OfficeTextCodec(DefaultOfficeOptions, DefaultFileOptions);
         var unit = MakeUnit(
@@ -231,15 +237,18 @@ public sealed class OfficeTextCodecAndBindingTests
             OfficeFormat.Word,
             default);
 
-        Assert.Contains(result.Errors, e => e.Code == "office_token_mismatch");
+        Assert.Empty(result.Errors);
+        Assert.Equal(unit.EncodedSource, Assert.Single(result.DecodedUnits!).EncodedInput);
+        Assert.Equal(unit.Slots.Select(s => s.OriginalText), result.DecodedUnits![0].DecodedSlots);
+        Assert.Contains(result.Skipped, e => e.Code == "office_token_mismatch" && e.UnitIndex == 0);
     }
 
     /// <summary>
-    /// Verifies empty translation string is rejected with empty_translation (B01).
+    /// Verifies empty translation retains source slots with empty_translation (B01).
     /// </summary>
     /// <returns>No return value.</returns>
     [Fact]
-    public void Decode_EmptyTranslation_ReturnsInvalidTranslation()
+    public void Decode_EmptyTranslation_PreservesSourceSlots()
     {
         var codec = new OfficeTextCodec(DefaultOfficeOptions, DefaultFileOptions);
         var unit = MakeUnit(
@@ -254,7 +263,10 @@ public sealed class OfficeTextCodecAndBindingTests
             OfficeFormat.Word,
             default);
 
-        Assert.Contains(result.Errors, e => e.Code == "empty_translation");
+        Assert.Empty(result.Errors);
+        Assert.Equal(unit.EncodedSource, Assert.Single(result.DecodedUnits!).EncodedInput);
+        Assert.Equal(unit.Slots.Select(s => s.OriginalText), result.DecodedUnits![0].DecodedSlots);
+        Assert.Contains(result.Skipped, e => e.Code == "empty_translation" && e.UnitIndex == 0);
     }
 
     /// <summary>

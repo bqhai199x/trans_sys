@@ -1,3 +1,4 @@
+using FileHandler.Api.Common;
 using DocumentFormat.OpenXml;
 using FileHandler.Api.Modules.Office;
 using A = DocumentFormat.OpenXml.Drawing;
@@ -18,13 +19,15 @@ public sealed class PowerPointTableReader
     /// <param name="units">Accumulated units collection.</param>
     /// <param name="codec">Office text codec.</param>
     /// <param name="limits">Active template quotas, or defaults.</param>
+    /// <param name="skipped">Optional source exclusion collector.</param>
     /// <returns>No return value.</returns>
     public void ReadTable(
         A.Table table,
         OfficeLocation tableLoc,
         IList<OfficeTranslationUnit> units,
         OfficeTextCodec codec,
-        OfficeProcessingOptions? limits = null)
+        OfficeProcessingOptions? limits = null,
+        List<SkipMetadata>? skipped = null)
     {
         var rowIndex = 0;
         foreach (var row in table.Elements<A.TableRow>())
@@ -39,7 +42,7 @@ public sealed class PowerPointTableReader
                 if (cell.HorizontalMerge?.Value == true || cell.VerticalMerge?.Value == true)
                 {
                     if (cell.TextBody is not null && HasNonEmptyText(cell.TextBody))
-                        throw new InvalidOperationException("Merged continuation with text is unsupported.");
+                        skipped?.Add(new(SkipCodes.MergedFollowerText, SkipSeverity.Warning, SkipStage.Extraction, SkipScope.Cell, 1, ProcessingMessages.MergedFollowerText, OfficeMetadata.Location(OfficeMetadata.At(tableLoc with { RowIndex = rowIndex, ColumnIndex = colIndex }, cell))));
                     continue;
                 }
 
@@ -74,7 +77,7 @@ public sealed class PowerPointTableReader
                             units.Count,
                             unitId,
                             unitId,
-                            cellLoc,
+                            OfficeMetadata.At(cellLoc, p),
                             template.Mode,
                             codec.Encode(template),
                             template.Slots,

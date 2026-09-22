@@ -14,15 +14,14 @@ internal static class MarkdownTranslationApplier
     /// <param name="options">File processing limits.</param>
     /// <param name="cancellationToken">Token for cancelling this operation.</param>
     /// <param name="validationBaseline">Whether nonempty translations use source text to validate intended structure changes.</param>
-    /// <returns>Patched Markdown text, or null with validation errors.</returns>
-    public static (string? Text, IReadOnlyList<FileError> Errors) Apply(MarkdownExtraction extraction, IReadOnlyList<string> translations, FileHandlingOptions options, CancellationToken cancellationToken, bool validationBaseline = false)
+    /// <param name="validateStructure">Optional block structure validator.</param>
+    /// <returns>Patched text, fatal errors and recoverable unit skips.</returns>
+    public static (string? Text, IReadOnlyList<FileError> Errors, IReadOnlyList<SkipMetadata> Skipped) Apply(MarkdownExtraction extraction, IReadOnlyList<string> translations, FileHandlingOptions options, CancellationToken cancellationToken, bool validationBaseline = false, Func<string, string, IReadOnlyList<FileError>>? validateStructure = null)
     {
         var errors = ValidateBatch(extraction, translations, options);
+        var skipped = new List<SkipMetadata>();
         if (errors.Count > 0)
-            return (null, errors);
-
-        if (extraction.HasInternalLinks && extraction.Units.Select((unit, index) => (unit, index)).Where(x => x.unit.IsHeading).Any(x => translations[x.index] != x.unit.Text))
-            return (null, [new("internal_anchor_change_unsupported", "Không thể đổi heading khi tài liệu có liên kết anchor nội bộ trong profile V1.")]);
+            return (null, errors, skipped);
 
         var replacements = new List<(int Index, int Start, int End, string Value)>();
         long outputChars = extraction.Source.Text.Length;
@@ -35,16 +34,52 @@ internal static class MarkdownTranslationApplier
             if (translated == unit.Text)
                 continue;
 
+            if (string.IsNullOrWhiteSpace(translated))
+            {
+                skipped.Add(new(SkipCodes.EmptyTranslation, SkipSeverity.Warning, SkipStage.Translation, SkipScope.Unit, 1, ProcessingMessages.EmptyTranslation, new(Line: unit.Line), i));
+                continue;
+            }
+            try { Utf8TextReader.GetByteCount(translated.AsSpan()); }
+            catch (EncoderFallbackException)
+            {
+                skipped.Add(new(SkipCodes.InvalidTranslation, SkipSeverity.Warning, SkipStage.Translation, SkipScope.Unit, 1, ProcessingMessages.InvalidUnicode, new(Line: unit.Line), i));
+                continue;
+            }
+            if (unit.IsHeading && extraction.HasInternalLinks)
+            {
+                skipped.Add(new(SkipCodes.InternalAnchorChangeUnsupported, SkipSeverity.Warning, SkipStage.Translation, SkipScope.Unit, 1, ProcessingMessages.InternalAnchorChange, new(Line: unit.Line), i));
+                continue;
+            }
             if (unit.IsHeading && translated.IndexOfAny(['\r', '\n']) >= 0)
             {
-                errors.Add(new("invalid_structure", "Bản dịch heading không được tạo thêm dòng hoặc block.", i, unit.Line));
+                skipped.Add(new(SkipCodes.InvalidStructure, SkipSeverity.Warning, SkipStage.Translation, SkipScope.Unit, 1, ProcessingMessages.HeadingStructure, new(Line: unit.Line), i));
                 continue;
             }
 
             var (value, markerErrors) = DecodeTranslation(unit, translated, i, validationBaseline);
-            errors.AddRange(markerErrors);
+            if (markerErrors.Count > 0)
+                skipped.Add(new(markerErrors[0].Code, SkipSeverity.Warning, SkipStage.Translation, SkipScope.Unit, 1,
+                    string.Join(" ", markerErrors.Select(e => e.Message).Distinct(StringComparer.Ordinal)), new(Line: unit.Line), i));
             if (value is not null)
             {
+                if (validateStructure is not null && !unit.IsMermaidLabel && unit.BlockStart is int blockStart && unit.BlockEnd is int blockEnd)
+                {
+                    var prefix = extraction.Source.Text[blockStart..unit.Start];
+                    var suffix = extraction.Source.Text[unit.End..blockEnd];
+                    var original = extraction.Source.Text[blockStart..blockEnd];
+                    var candidate = prefix + value + suffix;
+                    var findings = validateStructure(original, candidate);
+                    if (findings.Count > 0)
+                    {
+                        var baseline = DecodeTranslation(unit, translated, i, true);
+                        if (baseline.Value is not null) findings = validateStructure(prefix + baseline.Value + suffix, candidate);
+                    }
+                    if (findings.Count > 0)
+                    {
+                        skipped.Add(new(SkipCodes.InvalidStructure, SkipSeverity.Warning, SkipStage.Translation, SkipScope.Unit, 1, ProcessingMessages.BlockStructure, new(Line: unit.Line), i));
+                        continue;
+                    }
+                }
                 outputChars += value.Length - (unit.End - unit.Start);
                 outputBytes += Encoding.UTF8.GetByteCount(value) - Encoding.UTF8.GetByteCount(extraction.Source.Text.AsSpan(unit.Start, unit.End - unit.Start));
                 replacements.Add((i, unit.Start, unit.End, value));
@@ -52,38 +87,38 @@ internal static class MarkdownTranslationApplier
         }
 
         if (errors.Count > 0)
-            return (null, errors);
+            return (null, errors, skipped);
 
         for (var i = 1; i < replacements.Count; i++)
         {
             if (replacements[i - 1].End > replacements[i].Start)
             {
-                errors.Add(new("patch_conflict", "Các vùng thay thế bị chồng lấn."));
+                errors.Add(new("patch_conflict", ProcessingMessages.PatchConflict));
             }
         }
 
         if (errors.Count > 0)
-            return (null, errors);
+            return (null, errors, skipped);
 
-            if (outputBytes > options.MaxOutputBytes)
-                return (null, [new FileError("output_too_large", "Kết quả vượt giới hạn đầu ra.")]);
-            var output = new StringBuilder((int)Math.Min(outputChars, int.MaxValue));
-            var offset = 0;
-            for (var i = 0; i < replacements.Count; i++)
-            {
-                var patch = replacements[i];
-                output.Append(extraction.Source.Text, offset, patch.Start - offset);
-                output.Append(patch.Value);
-                offset = patch.End;
-            }
+        if (outputBytes > options.MaxOutputBytes)
+            return (null, [new FileError("output_too_large", ProcessingMessages.OutputSizeLimit)], skipped);
+        var output = new StringBuilder((int)Math.Min(outputChars, int.MaxValue));
+        var offset = 0;
+        for (var i = 0; i < replacements.Count; i++)
+        {
+            var patch = replacements[i];
+            output.Append(extraction.Source.Text, offset, patch.Start - offset);
+            output.Append(patch.Value);
+            offset = patch.End;
+        }
 
-            output.Append(extraction.Source.Text, offset, extraction.Source.Text.Length - offset);
+        output.Append(extraction.Source.Text, offset, extraction.Source.Text.Length - offset);
 
-            return (output.ToString(), []);
+        return (output.ToString(), [], skipped);
     }
 
     /// <summary>
-    /// Validates extraction errors, translation count, lengths, and non-empty translations.
+    /// Checks fatal extraction, count, null and translation length constraints.
     /// </summary>
     /// <param name="extraction">Extracted source units.</param>
     /// <param name="translations">Translated units.</param>
@@ -96,28 +131,15 @@ internal static class MarkdownTranslationApplier
             errors.AddRange(extraction.Errors);
 
         if (translations.Count != extraction.Units.Count)
-            errors.Add(new("translation_count_mismatch", $"Cần {extraction.Units.Count} bản dịch nhưng nhận được {translations.Count}."));
+            errors.Add(new("translation_count_mismatch", ProcessingMessages.TranslationCountMismatch(extraction.Units.Count, translations.Count)));
 
         var count = Math.Min(translations.Count, extraction.Units.Count);
         for (var i = 0; i < count; i++)
         {
             if (translations[i] is null)
-                errors.Add(new("invalid_translation", "Bản dịch không được null.", i, extraction.Units[i].Line));
-            else if (string.IsNullOrWhiteSpace(translations[i]))
-                errors.Add(new("empty_translation", "Bản dịch không được rỗng hoặc chỉ chứa khoảng trắng.", i, extraction.Units[i].Line));
+                errors.Add(new(SkipCodes.InvalidTranslation, ProcessingMessages.NullTranslation, i, extraction.Units[i].Line));
             else if (translations[i].Length > options.MaxTranslationChars)
-                errors.Add(new("translation_too_long", $"Bản dịch vượt giới hạn {options.MaxTranslationChars} ký tự.", i, extraction.Units[i].Line));
-            else
-            {
-                try
-                {
-                    Utf8TextReader.GetByteCount(translations[i].AsSpan());
-                }
-                catch (EncoderFallbackException)
-                {
-                    errors.Add(new("invalid_translation", "Bản dịch chứa chuỗi Unicode không hợp lệ.", i, extraction.Units[i].Line));
-                }
-            }
+                errors.Add(new("translation_too_long", ProcessingMessages.TranslationLimit(options.MaxTranslationChars), i, extraction.Units[i].Line));
         }
 
         return errors;
@@ -137,7 +159,7 @@ internal static class MarkdownTranslationApplier
         if (unit.IsMermaidLabel)
         {
             if (translation.Any(char.IsControl))
-                return (null, [new("invalid_structure", "Nhãn Mermaid không được chứa xuống dòng hoặc ký tự điều khiển.", index, unit.Line)]);
+                return (null, [new(SkipCodes.InvalidStructure, ProcessingMessages.MermaidStructure, index, unit.Line)]);
             var value = MermaidCodec.Encode(validationBaseline ? unit.Text : translation, unit.MermaidQuoted);
             return (value, errors);
         }
@@ -165,9 +187,9 @@ internal static class MarkdownTranslationApplier
             if (!token.IsMarker)
             {
                 if (token.Value.Length > 0 && stack.TryPeek(out var owner) && unit.Markers[owner].Kind == MarkerKind.Protected)
-                    errors.Add(new("protected_marker_not_empty", "Marker bảo vệ phải rỗng.", index, unit.Line));
+                    errors.Add(new(SkipCodes.ProtectedMarkerNotEmpty, ProcessingMessages.ProtectedMarkerNotEmpty, index, unit.Line));
                 if (unit.TokenTemplate is null && token.Value.Contains(MarkdownMarkerCodec.MarkerPrefix, StringComparison.Ordinal))
-                    errors.Add(new("invalid_marker_syntax", "Marker keepme không đúng cú pháp hoặc vượt miền ID hỗ trợ.", index, unit.Line));
+                    errors.Add(new(SkipCodes.InvalidMarkerSyntax, ProcessingMessages.LegacyMarkerSyntax, index, unit.Line));
                 output.Append(EscapeText(token.Value, unit.NewlineReplacement));
                 continue;
             }
@@ -177,29 +199,29 @@ internal static class MarkdownTranslationApplier
                 : token.Value;
             if (!string.Equals(token.Value, canonical, StringComparison.Ordinal))
             {
-                errors.Add(new("invalid_marker_syntax", $"Marker {token.Value} không ở dạng chuẩn {canonical}.", index, unit.Line, token.Value));
+                errors.Add(new(SkipCodes.InvalidMarkerSyntax, ProcessingMessages.NoncanonicalMarker(token.Value, canonical), index, unit.Line, token.Value));
                 continue;
             }
 
             if (!unit.Markers.TryGetValue(token.Id, out var definition))
             {
-                errors.Add(new("unexpected_marker", $"Marker {token.Value} không thuộc đơn vị này.", index, unit.Line, token.Value));
+                errors.Add(new(SkipCodes.UnexpectedMarker, ProcessingMessages.UnexpectedMarker(token.Value), index, unit.Line, token.Value));
                 continue;
             }
 
             if (!token.IsClosing)
             {
                 if (!seenOpen.Add(token.Id))
-                    errors.Add(new("duplicate_marker", $"Marker {token.Value} bị lặp.", index, unit.Line, token.Value));
+                    errors.Add(new(SkipCodes.DuplicateMarker, ProcessingMessages.DuplicateMarker(token.Value), index, unit.Line, token.Value));
                 stack.Push(token.Id);
                 if (!emptyEmphasis.Contains(token.Id)) output.Append(definition.OpenSource);
             }
             else
             {
                 if (!seenClose.Add(token.Id))
-                    errors.Add(new("duplicate_marker", $"Marker {token.Value} bị lặp.", index, unit.Line, token.Value));
+                    errors.Add(new(SkipCodes.DuplicateMarker, ProcessingMessages.DuplicateMarker(token.Value), index, unit.Line, token.Value));
                 if (stack.Count == 0 || stack.Pop() != token.Id)
-                    errors.Add(new("invalid_marker_nesting", $"Marker {token.Value} đóng sai thứ tự.", index, unit.Line, token.Value));
+                    errors.Add(new(SkipCodes.InvalidMarkerNesting, ProcessingMessages.InvalidMarkerNesting(token.Value), index, unit.Line, token.Value));
                 if (!emptyEmphasis.Contains(token.Id)) output.Append(definition.CloseSource);
             }
         }
@@ -207,9 +229,9 @@ internal static class MarkdownTranslationApplier
         foreach (var marker in unit.Markers.Values)
         {
             if (!seenOpen.Contains(marker.Id))
-                errors.Add(new("missing_marker", $"Thiếu marker mở {MarkdownMarkerCodec.Open(marker.Id)}.", index, unit.Line, MarkdownMarkerCodec.Open(marker.Id)));
+                errors.Add(new(SkipCodes.MissingMarker, ProcessingMessages.MissingOpeningMarker(MarkdownMarkerCodec.Open(marker.Id)), index, unit.Line, MarkdownMarkerCodec.Open(marker.Id)));
             if (!seenClose.Contains(marker.Id))
-                errors.Add(new("missing_marker", $"Thiếu marker đóng {MarkdownMarkerCodec.Close(marker.Id)}.", index, unit.Line, MarkdownMarkerCodec.Close(marker.Id)));
+                errors.Add(new(SkipCodes.MissingMarker, ProcessingMessages.MissingClosingMarker(MarkdownMarkerCodec.Close(marker.Id)), index, unit.Line, MarkdownMarkerCodec.Close(marker.Id)));
         }
 
         return errors.Count == 0 ? (output.ToString(), errors) : (null, errors);

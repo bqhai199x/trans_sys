@@ -29,7 +29,7 @@ public sealed class WordStructureValidator
         using var doc = WordprocessingDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
 
         if (doc.MainDocumentPart?.Document?.Body is null)
-            return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Tài liệu Word đầu ra thiếu phần thân.")]);
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", ProcessingMessages.MissingOutputBody)]);
 
         var roots = new OpenXmlPart[] { doc.MainDocumentPart }
             .Concat(doc.MainDocumentPart.HeaderParts).Concat(doc.MainDocumentPart.FooterParts)
@@ -38,7 +38,7 @@ public sealed class WordStructureValidator
         var tablesAfter = roots.SelectMany(p => p.RootElement!.Descendants<W.Table>()).ToList();
         if (tablesAfter.Count != plan.Tables.Count)
         {
-            return OfficeValidationResult.Failure([new FileError("office_output_invalid", $"Số lượng bảng trong tài liệu đầu ra ({tablesAfter.Count}) không khớp với nguồn ({plan.Tables.Count}).")]);
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", ProcessingMessages.OutputTableCountMismatch(tablesAfter.Count, plan.Tables.Count))]);
         }
 
         return OfficeValidationResult.Success();

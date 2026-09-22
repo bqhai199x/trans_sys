@@ -40,6 +40,20 @@ internal static class OfficeXmlInvariant
         var before = Read(source, limits);
         var after = Read(output, limits);
         if (before.Name != after.Name) return false;
+        if (mask.AttributeEdits.Count > 0)
+        {
+            var originals = Index(before);
+            var outputs = Index(after);
+            foreach (var edit in mask.AttributeEdits)
+            {
+                var name = XName.Get(edit.LocalName, edit.NamespaceUri);
+                if (!originals.TryGetValue(edit.ElementPath, out var original) || !outputs.TryGetValue(edit.ElementPath, out var translated) ||
+                    original.Attribute(name)?.Value != edit.SourceValue || translated.Attribute(name)?.Value != edit.Value)
+                    return false;
+                original.SetAttributeValue(name, "");
+                translated.SetAttributeValue(name, "");
+            }
+        }
         if (mask.ScalarEdits is not null)
         {
             var sourceIndex = Index(before);

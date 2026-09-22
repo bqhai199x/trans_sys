@@ -100,7 +100,8 @@ internal sealed class LimitedReadStream : Stream
     /// Rejects resizing.
     /// </summary>
     /// <param name="value">Ignored length.</param>
-    /// <returns>Always throws.</returns>
+    /// <returns>No return value.</returns>
+    /// <exception cref="NotSupportedException">Read-only stream cannot be resized.</exception>
     public override void SetLength(long value) => throw new NotSupportedException();
 
     /// <summary>
@@ -109,7 +110,8 @@ internal sealed class LimitedReadStream : Stream
     /// <param name="buffer">Ignored buffer.</param>
     /// <param name="offset">Ignored offset.</param>
     /// <param name="count">Ignored count.</param>
-    /// <returns>Always throws.</returns>
+    /// <returns>No return value.</returns>
+    /// <exception cref="NotSupportedException">Read-only stream cannot be written.</exception>
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
 
     /// <summary>

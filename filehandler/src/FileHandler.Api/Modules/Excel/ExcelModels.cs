@@ -1,3 +1,4 @@
+using FileHandler.Api.Common;
 using FileHandler.Api.Modules.Office;
 
 namespace FileHandler.Api.Modules.Excel;
@@ -39,7 +40,14 @@ public sealed record ExcelPlan(
     string SourceHash,
     IReadOnlyList<OfficeTranslationUnit> Units,
     IReadOnlyList<ExcelSheetSnapshot> Sheets,
-    IReadOnlyList<ExcelTableSnapshot> Tables);
+    IReadOnlyList<ExcelTableSnapshot> Tables)
+{
+
+    /// <summary>
+    /// Source inventory, selected ranges and extraction exclusions.
+    /// </summary>
+    public FileMetadata Metadata { get; init; } = FileMetadata.Create("excel");
+}
 
 /// <summary>
 /// Prepared patch for Excel workbook.

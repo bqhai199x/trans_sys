@@ -1,3 +1,5 @@
+using FileHandler.Tests.Modules.Office;
+using System.Text.Json;
 using System.Net;
 using System.Text;
 using FileHandler.Api.Common;
@@ -15,9 +17,14 @@ public sealed class FileConcurrencyTests
     /// <summary>
     /// Rejects excess requests without buffering them and releases permits after completion.
     /// </summary>
+    /// <param name="route">Route competing for shared concurrency permit.</param>
     /// <returns>Task completing after rejection and recovery assertions.</returns>
-    [Fact]
-    public async Task Import_RejectsExcessConcurrency_AndReleasesPermit()
+    [Theory]
+    [InlineData("/api/plaintext/import")]
+    [InlineData("/api/plaintext/export")]
+    [InlineData("/api/excel/sheets")]
+    [InlineData("/api/powerpoint/slides")]
+    public async Task Processing_RejectsExcessConcurrency_AndReleasesPermit(string route)
     {
         using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder => builder.ConfigureServices(services =>
             services.PostConfigure<FileHandlingOptions>(options => options.MaxConcurrentRequests = 1)));
@@ -40,9 +47,11 @@ public sealed class FileConcurrencyTests
         try
         {
             await body.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
-            using var blocked = await Send(client);
+            using var blocked = await Send(client, route);
             Assert.Equal(HttpStatusCode.TooManyRequests, blocked.StatusCode);
-            Assert.Contains("request_limit_exceeded", await blocked.Content.ReadAsStringAsync());
+            using var rejected = JsonDocument.Parse(await blocked.Content.ReadAsStringAsync());
+            Assert.Equal("request_limit_exceeded", rejected.RootElement.GetProperty("errors")[0].GetProperty("code").GetString());
+            Assert.Equal("failed", rejected.RootElement.GetProperty("metadata").GetProperty("status").GetString());
         }
         finally
         {
@@ -51,7 +60,7 @@ public sealed class FileConcurrencyTests
             await response.Response.Body.CopyToAsync(Stream.Null, TestContext.Current.CancellationToken);
             await completed.Task.WaitAsync(TimeSpan.FromSeconds(10));
         }
-        using var recovered = await Send(client);
+        using var recovered = await Send(client, route);
         Assert.Equal(HttpStatusCode.OK, recovered.StatusCode);
     }
 
@@ -59,12 +68,18 @@ public sealed class FileConcurrencyTests
     /// Sends a small text import.
     /// </summary>
     /// <param name="client">Test HTTP client.</param>
+    /// <param name="route">Processing endpoint.</param>
     /// <returns>Response owned by caller.</returns>
-    private static async Task<HttpResponseMessage> Send(HttpClient client)
+    private static async Task<HttpResponseMessage> Send(HttpClient client, string route)
     {
         using var form = new MultipartFormDataContent();
-        form.Add(new StringContent("Hello"), "file", "a.txt");
-        return await client.PostAsync("/api/plaintext/import", form, TestContext.Current.CancellationToken);
+        if (route.Contains("excel", StringComparison.Ordinal))
+            form.Add(new ByteArrayContent(OfficeFixtureFactory.CreateSelectionWorkbook()), "file", "a.xlsx");
+        else if (route.Contains("powerpoint", StringComparison.Ordinal))
+            form.Add(new ByteArrayContent(OfficeFixtureFactory.CreateSelectionPresentation()), "file", "a.pptx");
+        else form.Add(new StringContent("Hello"), "file", "a.txt");
+        if (route.EndsWith("export", StringComparison.Ordinal)) form.Add(new StringContent("[\"Hello\"]"), "texts");
+        return await client.PostAsync(route, form, TestContext.Current.CancellationToken);
     }
 
     /// <summary>

@@ -29,12 +29,12 @@ public sealed class PowerPointStructureValidator
         using var doc = PresentationDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
 
         if (doc.PresentationPart?.Presentation?.SlideIdList is null)
-            return OfficeValidationResult.Failure([new FileError("office_output_invalid", "Tệp PowerPoint đầu ra thiếu danh sách trang trình chiếu.")]);
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", ProcessingMessages.MissingOutputSlides)]);
 
         var slidesAfter = doc.PresentationPart.Presentation.SlideIdList.Elements<P.SlideId>().ToList();
         if (slidesAfter.Count != plan.Slides.Count)
         {
-            return OfficeValidationResult.Failure([new FileError("office_output_invalid", $"Số lượng slide đầu ra ({slidesAfter.Count}) không khớp với nguồn ({plan.Slides.Count}).")]);
+            return OfficeValidationResult.Failure([new FileError("office_output_invalid", ProcessingMessages.OutputSlideCountMismatch(slidesAfter.Count, plan.Slides.Count))]);
         }
 
         return OfficeValidationResult.Success();

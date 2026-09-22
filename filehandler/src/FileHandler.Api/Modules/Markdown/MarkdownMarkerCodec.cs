@@ -1,5 +1,7 @@
 using System.Globalization;
 
+using FileHandler.Api.Common;
+
 namespace FileHandler.Api.Modules.Markdown;
 
 internal sealed class MarkerAllocationContext
@@ -30,7 +32,7 @@ internal sealed class MarkerAllocationContext
         while (_reserved.Contains(_next))
         {
             if (_next == int.MaxValue)
-                throw new InvalidOperationException("Không còn marker ID khả dụng.");
+                throw new InvalidOperationException(ProcessingMessages.MarkerIdsExhausted);
             _next++;
         }
 

@@ -10,22 +10,16 @@ public sealed class WordImportRequest
 {
 
     /// <summary>
+    /// Whether to return informational skips and units.json; false by default.
+    /// </summary>
+    [FromForm(Name = "debug")]
+    public bool Debug { get; init; }
+
+    /// <summary>
     /// Uploaded Word source file (.docx).
     /// </summary>
     [FromForm(Name = "file")]
     public IFormFile? File { get; init; }
-}
-
-/// <summary>
-/// Structural and formatting metadata for a Word document.
-/// </summary>
-public sealed class WordMetadata
-{
-
-    /// <summary>
-    /// Total number of extracted translation units.
-    /// </summary>
-    public int UnitCount { get; init; }
 }
 
 /// <summary>
@@ -36,7 +30,7 @@ public sealed class WordMetadata
 /// <param name="Errors">Validation errors encountered during import.</param>
 public sealed record WordImportResponse(
     IReadOnlyList<string> Texts,
-    WordMetadata? Metadata,
+    FileMetadata Metadata,
     IReadOnlyList<FileError> Errors);
 
 /// <summary>

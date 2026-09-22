@@ -44,7 +44,7 @@ public sealed class GlobalExceptionHandlerTests
         Assert.StartsWith("application/json", context.Response.ContentType);
         body.Position = 0;
         using var json = await JsonDocument.ParseAsync(body);
-        Assert.Equal(code, json.RootElement[0].GetProperty("code").GetString());
+        Assert.Equal(code, json.RootElement.GetProperty("errors")[0].GetProperty("code").GetString());
         Assert.DoesNotContain("secret", json.RootElement.GetRawText());
         Assert.DoesNotContain("secret", string.Join("\n", logger.Messages));
         Assert.Null(logger.Exception);

@@ -53,18 +53,24 @@ public sealed class OfficeReviewRegressionTests
     }
 
     /// <summary>
-    /// Verifies text in a merged follower fails preflight instead of being translated invisibly.
+    /// Verifies merged follower text is preserved while owner cell translates.
     /// </summary>
     /// <returns>Task completing after assertions.</returns>
     [Fact]
-    public async Task Excel_MergedFollowerText_IsRejected()
+    public async Task Excel_MergedFollowerText_IsSkipped()
     {
         using var buffer = new MemoryStream();
         buffer.Write(OfficeFixtureFactory.CreateExcelWithInlineStrings([["Owner", "Follower"]]));
         using (var doc = SpreadsheetDocument.Open(buffer, true))
             doc.WorkbookPart!.WorksheetParts.Single().Worksheet!.Append(new S.MergeCells(new S.MergeCell { Reference = "A1:B1" }));
         var import = await ExcelService.Create().ImportAsync(new MemoryStream(buffer.ToArray()));
-        Assert.Contains(import.Errors, e => e.Code == "office_unsupported_content");
+        Assert.Empty(import.Errors);
+        Assert.Equal(new[] { "Sheet1", "Owner" }, import.Texts);
+        Assert.Contains(import.Metadata.Skipped, e => e.Code == "merged_follower_text" && e.Location.CellReference == "B1");
+        var exported = await ExcelService.Create().ExportAsync(new MemoryStream(buffer.ToArray()), ["Sheet1", "Changed"]);
+        Assert.Empty(exported.Errors);
+        using var output = SpreadsheetDocument.Open(new MemoryStream(exported.Content!), false);
+        Assert.Equal(new[] { "Changed", "Follower" }, output.WorkbookPart!.WorksheetParts.Single().Worksheet!.Descendants<S.Text>().Select(t => t.Text));
     }
 
     /// <summary>
@@ -132,7 +138,9 @@ public sealed class OfficeReviewRegressionTests
         using var doc = WordprocessingDocument.Open(new MemoryStream(output), false);
         Assert.Equal("FIELDChanged", doc.MainDocumentPart!.Document!.Body!.InnerText);
         var reordered = await service.ExportAsync(new MemoryStream(bytes), ["<ox:r0>Changed</ox:r0><ox:k0/>"]);
-        Assert.Contains(reordered.Errors, e => e.Code == "office_token_mismatch");
+        Assert.Equal(bytes, reordered.Content);
+        Assert.Empty(reordered.Errors);
+        Assert.Contains(reordered.Metadata.Skipped, e => e.Code == "office_token_mismatch");
     }
 
     /// <summary>
@@ -207,7 +215,7 @@ public sealed class OfficeReviewRegressionTests
         var imported = await service.ImportAsync(new MemoryStream(bytes));
         Assert.Empty(imported.Errors);
         var translations = imported.Texts.ToArray();
-        translations[0] = translations[0].Replace(">B<", ">Changed<", StringComparison.Ordinal);
+        translations[1] = translations[1].Replace(">B<", ">Changed<", StringComparison.Ordinal);
         var output = await Export(service, bytes, translations);
         using var result = SpreadsheetDocument.Open(new MemoryStream(output), false);
         var cell = result.WorkbookPart!.WorksheetParts.Single().Worksheet!.Descendants<S.Cell>().First();

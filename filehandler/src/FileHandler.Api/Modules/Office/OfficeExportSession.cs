@@ -110,7 +110,7 @@ public sealed class OfficeExportSession : IDisposable
         using var outputMs = new MemoryStream();
         using var boundedStream = new OfficeBoundedStream(outputMs, _fileHandlingOptions.MaxOutputBytes);
 
-        using (var originalZip = new ZipArchive(new MemoryStream(_source.OriginalBytes), ZipArchiveMode.Read, false))
+        using (var originalZip = new ZipArchive(new MemoryStream(_source.Bytes), ZipArchiveMode.Read, false))
         using (var targetZip = new ZipArchive(boundedStream, ZipArchiveMode.Create, true))
         {
             var expandedBytes = originalZip.Entries.Sum(e => _touchedParts.TryGetValue("/" + e.FullName.TrimStart('/'), out var replacement) ? replacement.LongLength : e.Length);

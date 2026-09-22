@@ -1,3 +1,4 @@
+using FileHandler.Api.Common;
 using FileHandler.Api.Modules.Office;
 
 namespace FileHandler.Api.Modules.Word;
@@ -30,7 +31,14 @@ public sealed record WordPlan(
     string SourceHash,
     IReadOnlyList<OfficeTranslationUnit> Units,
     IReadOnlyList<WordStorySnapshot> Stories,
-    IReadOnlyList<WordTableSnapshot> Tables);
+    IReadOnlyList<WordTableSnapshot> Tables)
+{
+
+    /// <summary>
+    /// Public source mapping and preserved region metadata.
+    /// </summary>
+    public FileMetadata Metadata { get; init; } = FileMetadata.Create("word");
+}
 
 /// <summary>
 /// Prepared patch for Word document ready for application.

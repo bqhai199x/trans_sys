@@ -59,6 +59,16 @@ public sealed class MarkdownTranslationApplierTests
     public void Apply_ValidatesEachTranslationWithSourceLocation(string? translation, string code)
     {
         var result = MarkdownTranslationApplier.Apply(Extraction(), [translation!], new() { MaxTranslationChars = 3 }, default);
+        if (code == "empty_translation")
+        {
+            Assert.Equal("Hello", result.Text);
+            Assert.Empty(result.Errors);
+            var skipped = Assert.Single(result.Skipped);
+            Assert.Equal(code, skipped.Code);
+            Assert.Equal(0, skipped.UnitIndex);
+            Assert.Equal(new SourceLineRange(1, 1), skipped.Location.Line);
+            return;
+        }
         Assert.Null(result.Text);
         var error = Assert.Single(result.Errors);
         Assert.Equal(code, error.Code);
@@ -92,7 +102,7 @@ public sealed class MarkdownTranslationApplierTests
     }
 
     /// <summary>
-    /// Verifies invalid markers prevent partial output.
+    /// Verifies invalid markers preserve affected source unit.
     /// </summary>
     /// <param name="translation">Translated unit text.</param>
     /// <param name="code">Machine-readable error code.</param>
@@ -104,11 +114,12 @@ public sealed class MarkdownTranslationApplierTests
     [InlineData("</ox:r0>x<ox:r0>", "invalid_marker_syntax")]
     [InlineData("<ox:r00>x</ox:r00>", "invalid_marker_syntax")]
     [InlineData("<ox:r2147483648>x</ox:r2147483648>", "invalid_marker_syntax")]
-    public void Apply_RejectsInvalidMarkersAtomically(string translation, string code)
+    public void Apply_SkipsInvalidMarkerUnit(string translation, string code)
     {
         var result = MarkdownTranslationApplier.Apply(Extraction("**Hello**!"), [translation], new(), default);
-        Assert.Null(result.Text);
-        Assert.Contains(result.Errors, x => x.Code == code);
+        Assert.Equal("**Hello**!", result.Text);
+        Assert.Empty(result.Errors);
+        Assert.Contains(result.Skipped, x => x.Code == code);
     }
 
     /// <summary>
@@ -124,8 +135,9 @@ public sealed class MarkdownTranslationApplierTests
         Assert.Equal("**Bonjour** `code`", result.Text);
         var invalid = MarkdownTranslationApplier.Apply(Extraction("Read `code`"),
             ["<ox:r0>Lire </ox:r0><ox:k0>changed</ox:k0>"], new(), default);
-        Assert.Null(invalid.Text);
-        Assert.Contains(invalid.Errors, x => x.Code == "invalid_marker_syntax");
+        Assert.Equal("Read `code`", invalid.Text);
+        Assert.Empty(invalid.Errors);
+        Assert.Contains(invalid.Skipped, x => x.Code == "invalid_marker_syntax");
     }
 
     /// <summary>
@@ -140,8 +152,9 @@ public sealed class MarkdownTranslationApplierTests
     public void Apply_RejectsMissingSoftBreakTokens(string translation)
     {
         var result = MarkdownTranslationApplier.Apply(Extraction("> One\r\n> Two"), [translation], new(), default);
-        Assert.Contains(result.Errors, e => e.Code == "invalid_marker_syntax");
-        Assert.Null(result.Text);
+        Assert.Contains(result.Skipped, e => e.Code == "invalid_marker_syntax");
+        Assert.Empty(result.Errors);
+        Assert.Equal("> One\r\n> Two", result.Text);
     }
 
     /// <summary>
@@ -164,8 +177,9 @@ public sealed class MarkdownTranslationApplierTests
     public void Apply_RejectsHeadingNewlinesAndOverlappingPatches()
     {
         var heading = MarkdownTranslationApplier.Apply(Extraction("# Hello"), ["a\nb"], new(), default);
-        Assert.Equal("invalid_structure", Assert.Single(heading.Errors).Code);
-        Assert.Null(heading.Text);
+        Assert.Equal("invalid_structure", Assert.Single(heading.Skipped).Code);
+        Assert.Equal("# Hello", heading.Text);
+        Assert.Empty(heading.Errors);
         var extraction = Extraction();
         extraction = extraction with { Units = [extraction.Units[0], extraction.Units[0]] };
         var conflict = MarkdownTranslationApplier.Apply(extraction, ["a", "b"], new(), default);

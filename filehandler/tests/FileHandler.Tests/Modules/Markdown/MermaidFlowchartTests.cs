@@ -128,19 +128,20 @@ public sealed class MermaidFlowchartTests
     /// </summary>
     /// <param name="translation">Invalid label translation.</param>
     /// <param name="code">Expected error code.</param>
-    /// <returns>Task completing after atomic failure assertions.</returns>
+    /// <returns>Task completing after source preservation and located skip assertions.</returns>
     [Theory]
     [InlineData("", "empty_translation")]
     [InlineData("A\nB", "invalid_structure")]
-    public async Task InvalidLabels_ReturnLocatedErrors(string translation, string code)
+    public async Task InvalidLabels_PreserveSourceWithLocatedSkip(string translation, string code)
     {
         var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
         var result = await service.ExportAsync(new MemoryStream(Encoding.UTF8.GetBytes("```mermaid\nflowchart LR\nA[Label]\n```")), [translation]);
-        Assert.Null(result.Content);
-        var error = Assert.Single(result.Errors);
+        Assert.Equal("```mermaid\nflowchart LR\nA[Label]\n```", Encoding.UTF8.GetString(result.Content!));
+        Assert.Empty(result.Errors);
+        var error = Assert.Single(result.Metadata.Skipped, s => s.Stage == "translation");
         Assert.Equal(code, error.Code);
-        Assert.Equal(0, error.Index);
-        Assert.Equal(new SourceLineRange(3, 3), error.Line);
+        Assert.Equal(0, error.UnitIndex);
+        Assert.Equal(new SourceLineRange(3, 3), error.Location.Line);
     }
 
     /// <summary>

@@ -101,59 +101,79 @@ public sealed class WordService : IFileHandler
     /// <param name="stream">Caller-owned source stream.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
     /// <returns>Task containing units or validation errors.</returns>
-    public async Task<ImportResult> ImportAsync(Stream stream, CancellationToken cancellationToken = default)
+    public Task<ImportResult> ImportAsync(Stream stream, CancellationToken cancellationToken = default) =>
+        ImportAsync(stream, false, cancellationToken);
+
+    /// <summary>
+    /// Imports source while constructing public unit metadata only when requested.
+    /// </summary>
+    /// <param name="stream">Caller-owned readable source stream.</param>
+    /// <param name="debug">Whether to return informational skips and build diagnostic unit mapping.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Texts, skips and optional public unit mapping, or fatal errors.</returns>
+    public async Task<ImportResult> ImportAsync(Stream stream, bool debug, CancellationToken cancellationToken)
     {
+        var result = await ImportCoreAsync(stream, debug, cancellationToken).ConfigureAwait(false);
+        return result with { Metadata = result.Metadata.ForResponse(debug) };
+    }
+
+    /// <summary>
+    /// Runs import with complete internal skip facts for preservation validation.
+    /// </summary>
+    /// <param name="stream">Caller-owned source stream.</param>
+    /// <param name="debug">Whether to construct diagnostic unit mapping.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Processing result before public skip projection.</returns>
+    private async Task<ImportResult> ImportCoreAsync(Stream stream, bool debug, CancellationToken cancellationToken)
+    {
+        var metadata = FileMetadata.Create("word");
         try
         {
             var readResult = await _reader.ReadAsync(new LimitedReadStream(stream, _fileHandlingOptions.MaxFileBytes, "file_too_large"), OfficeFormat.Word, cancellationToken).ConfigureAwait(false);
             if (readResult.Errors.Count > 0 || readResult.Source is null)
             {
-                return new([], readResult.Errors);
+                return new([], readResult.Errors) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
             }
 
             using var source = readResult.Source;
-            if (source.OriginalBytes.Length > _fileHandlingOptions.MaxFileBytes)
+            if (source.Bytes.Length > _fileHandlingOptions.MaxFileBytes)
             {
-                var err = new FileError("file_too_large", $"Kích thước tệp ({source.OriginalBytes.Length} bytes) vượt quá giới hạn ({_fileHandlingOptions.MaxFileBytes} bytes).");
-                return new([], [err]);
+                var err = new FileError("file_too_large", ProcessingMessages.FileSizeLimit(source.Bytes.Length, _fileHandlingOptions.MaxFileBytes));
+                return new([], [err]) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
             }
 
+            source.IncludeInformationalSkips = debug;
             var inventory = _inspector.Inspect(source, cancellationToken);
 
             WordPlan plan;
-            try
-            {
-                plan = _extractor.Analyze(source, inventory, cancellationToken);
-            }
-            catch (InvalidOperationException ex) when (ex is not FileLimitException)
-            {
-                var err = new FileError("office_unsupported_content", ex.Message);
-                return new([], [err]);
-            }
+            try { plan = _extractor.Analyze(source, inventory, cancellationToken); }
+            finally { metadata = source.ProcessingMetadata ?? metadata; }
 
+            metadata = plan.Metadata;
             if (plan.Units.Count > _fileHandlingOptions.MaxUnits)
             {
-                var err = new FileError("too_many_units", $"Số lượng đơn vị dịch ({plan.Units.Count}) vượt quá giới hạn ({_fileHandlingOptions.MaxUnits}).");
-                return new([], [err]);
+                var err = new FileError("too_many_units", ProcessingMessages.UnitCountLimit(plan.Units.Count, _fileHandlingOptions.MaxUnits));
+                return new([], [err]) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
             }
 
             var selectedPartUris = plan.Stories.Select(s => s.PartUri).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken);
+            var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken, metadata.Skipped);
             if (!sourceValidation.IsValid)
             {
-                return new([], sourceValidation.Errors);
+                return new([], sourceValidation.Errors) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
             }
 
+            if (debug) metadata = OfficeMetadata.WithUnits(metadata, plan.Units, cancellationToken);
             var texts = plan.Units.Select(u => u.EncodedSource).ToArray();
-            return new(texts, []);
+            return new(texts, []) { Metadata = metadata };
         }
-        catch (InvalidDataException)
+        catch (Exception ex) when (ex is InvalidDataException or System.Xml.XmlException or OpenXmlPackageException or FormatException or OverflowException)
         {
-            return new([], [new FileError("invalid_office_package", "Cấu trúc gói Office không hợp lệ.")]);
+            return new([], [new FileError("invalid_office_package", ProcessingMessages.InvalidOfficePackage)]) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
         }
         catch (FileLimitException ex)
         {
-            return new([], [new FileError(ex.Code, ex.Message)]);
+            return new([], [new FileError(ex.Code, ex.Message)]) { Metadata = metadata with { Status = ProcessingStatus.Failed } };
         }
     }
 
@@ -166,75 +186,77 @@ public sealed class WordService : IFileHandler
     /// <returns>Task containing output bytes or validation errors.</returns>
     public async Task<ExportResult> ExportAsync(Stream stream, IReadOnlyList<string> translations, CancellationToken cancellationToken = default)
     {
+        var result = await ExportCoreAsync(stream, translations, cancellationToken).ConfigureAwait(false);
+        return result with { Metadata = result.Metadata.ForResponse(false) };
+    }
+
+    /// <summary>
+    /// Runs export with complete internal skip facts for preservation validation.
+    /// </summary>
+    /// <param name="stream">Caller-owned source stream.</param>
+    /// <param name="translations">Translations in source mapping order.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns>Processing result before public skip projection.</returns>
+    private async Task<ExportResult> ExportCoreAsync(Stream stream, IReadOnlyList<string> translations, CancellationToken cancellationToken)
+    {
+        var metadata = FileMetadata.Create("word");
         try
         {
             var readResult = await _reader.ReadAsync(new LimitedReadStream(stream, _fileHandlingOptions.MaxFileBytes, "file_too_large"), OfficeFormat.Word, cancellationToken).ConfigureAwait(false);
             if (readResult.Errors.Count > 0 || readResult.Source is null)
             {
-                return new(null, ContentType, readResult.Errors);
+                return new(null, ContentType, readResult.Errors) { Metadata = metadata.ForExport(true) };
             }
 
             using var source = readResult.Source;
-            if (source.OriginalBytes.Length > _fileHandlingOptions.MaxFileBytes)
+            if (source.Bytes.Length > _fileHandlingOptions.MaxFileBytes)
             {
-                var err = new FileError("file_too_large", $"Kích thước tệp ({source.OriginalBytes.Length} bytes) vượt quá giới hạn ({_fileHandlingOptions.MaxFileBytes} bytes).");
-                return new(null, ContentType, [err]);
+                var err = new FileError("file_too_large", ProcessingMessages.FileSizeLimit(source.Bytes.Length, _fileHandlingOptions.MaxFileBytes));
+                return new(null, ContentType, [err]) { Metadata = metadata.ForExport(true) };
             }
 
+            source.IncludeInformationalSkips = false;
             var inventory = _inspector.Inspect(source, cancellationToken);
 
             WordPlan plan;
-            try
-            {
-                plan = _extractor.Analyze(source, inventory, cancellationToken);
-            }
-            catch (InvalidOperationException ex) when (ex is not FileLimitException)
-            {
-                var err = new FileError("office_unsupported_content", ex.Message);
-                return new(null, ContentType, [err]);
-            }
+            try { plan = _extractor.Analyze(source, inventory, cancellationToken); }
+            finally { metadata = source.ProcessingMetadata ?? metadata; }
 
+            metadata = plan.Metadata;
             if (plan.Units.Count > _fileHandlingOptions.MaxUnits)
                 throw new FileLimitException("too_many_units");
 
             var selectedPartUris = plan.Stories.Select(s => s.PartUri).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-            var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken);
+            var sourceValidation = _packageValidator.ValidateSource(source, selectedPartUris, cancellationToken, metadata.Skipped);
             if (!sourceValidation.IsValid)
             {
-                return new(null, ContentType, sourceValidation.Errors);
+                return new(null, ContentType, sourceValidation.Errors) { Metadata = metadata.ForExport(true) };
             }
 
             var decodeResult = _codec.ValidateAndDecode(plan.Units, translations, OfficeFormat.Word, cancellationToken);
             if (decodeResult.Errors.Count > 0 || decodeResult.DecodedUnits is null)
             {
-                return new(null, ContentType, decodeResult.Errors);
+                return new(null, ContentType, decodeResult.Errors) { Metadata = metadata.ForExport(true) };
             }
 
+            metadata = metadata.AppendSkipped(decodeResult.Skipped).ForExport();
             var patch = _applier.Prepare(plan, decodeResult.DecodedUnits, cancellationToken);
 
-            var isIdentity = true;
-            for (var i = 0; i < plan.Units.Count; i++)
-            {
-                if (!string.Equals(plan.Units[i].EncodedSource, translations[i], StringComparison.Ordinal))
-                {
-                    isIdentity = false;
-                    break;
-                }
-            }
+            var isIdentity = patch.EditMasks.Count == 0;
 
             if (isIdentity)
             {
-                if (source.OriginalBytes.Length > _fileHandlingOptions.MaxOutputBytes)
+                if (source.Bytes.Length > _fileHandlingOptions.MaxOutputBytes)
                 {
-                    var err = new FileError("output_too_large", "Kích thước tệp vượt quá giới hạn đầu ra cho phép.");
-                    return new(null, ContentType, [err]);
+                    var err = new FileError("output_too_large", ProcessingMessages.OutputSizeLimit);
+                    return new(null, ContentType, [err]) { Metadata = metadata.ForExport(true) };
                 }
 
-                return new(source.OriginalBytes, ContentType, []);
+                return new(source.Bytes, ContentType, []) { Metadata = metadata };
             }
 
             using var session = OfficeExportSession.Create(source, _options, _fileHandlingOptions);
-            using (var docMs = new MemoryStream(source.OriginalBytes))
+            using (var docMs = new MemoryStream(source.Bytes))
             using (var doc = WordprocessingDocument.Open(docMs, false, OfficeTextBindings.Settings(_options)))
             {
                 _applier.Apply(session, doc, patch, cancellationToken);
@@ -243,31 +265,31 @@ public sealed class WordService : IFileHandler
             var output = await session.FinalizeAsync(cancellationToken).ConfigureAwait(false);
             if (output.OutputBytes > _fileHandlingOptions.MaxOutputBytes)
             {
-                var err = new FileError("output_too_large", "Kích thước tệp vượt quá giới hạn đầu ra cho phép.");
-                return new(null, ContentType, [err]);
+                var err = new FileError("output_too_large", ProcessingMessages.OutputSizeLimit);
+                return new(null, ContentType, [err]) { Metadata = metadata.ForExport(true) };
             }
 
-            var outputValidation = _packageValidator.ValidateOutput(source, output, patch.EditMasks, cancellationToken);
+            var outputValidation = _packageValidator.ValidateOutput(source, output, patch.EditMasks, cancellationToken, metadata.Skipped);
             if (!outputValidation.IsValid)
             {
-                return new(null, ContentType, outputValidation.Errors);
+                return new(null, ContentType, outputValidation.Errors) { Metadata = metadata.ForExport(true) };
             }
 
             var structureValidation = _structureValidator.Validate(output.Content, plan, cancellationToken);
             if (!structureValidation.IsValid)
             {
-                return new(null, ContentType, structureValidation.Errors);
+                return new(null, ContentType, structureValidation.Errors) { Metadata = metadata.ForExport(true) };
             }
 
-            return new(output.Content, ContentType, []);
+            return new(output.Content, ContentType, []) { Metadata = metadata };
         }
-        catch (InvalidDataException)
+        catch (Exception ex) when (ex is InvalidDataException or System.Xml.XmlException or OpenXmlPackageException or FormatException or OverflowException)
         {
-            return new(null, ContentType, [new FileError("invalid_office_package", "Cấu trúc gói Office không hợp lệ.")]);
+            return new(null, ContentType, [new FileError("invalid_office_package", ProcessingMessages.InvalidOfficePackage)]) { Metadata = metadata.ForExport(true) };
         }
         catch (FileLimitException ex)
         {
-            return new(null, ContentType, [new FileError(ex.Code, ex.Message)]);
+            return new(null, ContentType, [new FileError(ex.Code, ex.Message)]) { Metadata = metadata.ForExport(true) };
         }
     }
 
