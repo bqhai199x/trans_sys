@@ -1,42 +1,63 @@
-# Quy tắc token r/k/b
+# Token và placeholder
 
-Contract này thay thế metadata token trong kế hoạch Translator ban đầu. Filehandler không trả `metadata.tokenMetadata`; Translator không nhận `token_metadata`. Chỉ chuyển `texts` theo đúng thứ tự giữa import, dịch và export.
+[Trang bắt đầu](README.md) · [Processing](processing.md) · [Status/skip](skip-status-messages.md)
 
-| Token | Ý nghĩa | Quyền di chuyển |
+## Wire format
+
+Markdown và Office dùng token sau để giữ liên kết bản dịch với formatting/nội dung nguồn:
+
+| Token | Ý nghĩa | Rule |
 |---|---|---|
-| `<ox:r0>text</ox:r0>` | Văn bản được dịch, giữ liên kết với định dạng nguồn | Trong cùng vùng giữa các boundary |
-| `<ox:k0/>` | Nội dung được bảo vệ: inline code, field đơn, ảnh inline khi cấu trúc cho phép | Trong cùng vùng giữa các boundary; giữ nguyên token |
-| `<ox:b0/>` | Boundary hoặc nội dung cố định: tab, ngắt dòng, field phức tạp, marker, ranh giới container | Không đổi thứ tự; không token nào được vượt qua |
+| `<ox:r0>text</ox:r0>` | Slot text được dịch. | Có thể đổi thứ tự trong cùng vùng giữa boundary; giữ ID. |
+| `<ox:k0/>` | Protected anchor có thể di chuyển, ví dụ inline code. | Giữ nguyên token; chỉ di chuyển trong cùng vùng. |
+| `<ox:b0/>` | Boundary hoặc đối tượng cố định, ví dụ break/container boundary. | Giữ thứ tự; token khác không được vượt qua. |
 
-ID gồm tiền tố `r`, `k`, `b` và số nguyên không âm dạng chuẩn, không có số 0 thừa ở đầu. Không yêu cầu các ID liên tiếp. Mỗi ID nguồn phải xuất hiện đúng một lần trong cùng unit kết quả; không đổi loại token. Run không lồng nhau; ngoài token không có literal text. Trong run, escape `\` thành `\\`, `<` thành `\<`. Run riêng lẻ có thể rỗng nhưng không được xóa hết phần chữ của unit.
+ID gồm `r`, `k` hoặc `b` và số nguyên không âm chuẩn, không có số 0 thừa. ID có thể không liên tiếp; mỗi ID nguồn xuất hiện đúng một lần trong unit kết quả. Run không lồng nhau, không có literal ngoài token. Bên trong run, escape `\` thành `\\`, `<` thành `\<`. Một slot có thể rỗng nếu unit vẫn còn text không trắng.
 
-```text
-Nguồn:   <ox:r0>Version </ox:r0><ox:k0/><ox:r1> required</ox:r1>
-Hợp lệ:  <ox:r1>Cần </ox:r1><ox:r0>phiên bản </ox:r0><ox:k0/>
-
-Nguồn:   <ox:r0>Name:</ox:r0><ox:b0/><ox:r1>John</ox:r1>
-Sai:     <ox:r1>John</ox:r1><ox:b0/><ox:r0>Tên:</ox:r0>
-```
-
-Filehandler chèn boundary tổng hợp tại các lần chuyển container, ví dụ đi vào/ra hyperlink. Boundary tổng hợp không có nội dung để chèn vào file xuất. Những boundary đại diện cho đối tượng thật sẽ khôi phục đối tượng nguồn. Scope và địa chỉ XML vẫn là chi tiết nội bộ để dựng token và render, không được gửi cho model.
-
-Filehandler rút gọn boundary trước khi trả unit: ẩn toàn bộ `bN` ở đầu/cuối, và chỉ giữ boundary đầu tiên trong mỗi nhóm `bN` liên tiếp ở giữa. Bookmark, ngắt trang, field phức tạp, HTML và các đối tượng nguồn tương ứng vẫn được giữ nội bộ để export. `kN` không bị ẩn; các run vẫn không được vượt qua boundary còn hiển thị. ID có thể có khoảng trống sau khi rút gọn.
-
-Nếu chỉ còn một run và không có anchor di chuyển, unit trả plain text (trừ literal chứa prefix dành riêng). Ví dụ `<ox:b0/><ox:r0>改訂履歴</ox:r0><ox:b1/>` trở thành `改訂履歴`. Không tự bỏ token ở client; luôn dùng kết quả import mới.
-
-Riêng Word, các run liền nhau chỉ khác font hint được gộp khi font ASCII, High ANSI và East Asian hiệu lực xác định được là cùng một tên font. Việc kiểm tra xét defaults, chuỗi paragraph/character style và định dạng trực tiếp; theme chưa resolve, style thiếu/vòng lặp hoặc font khác nhau sẽ giữ run riêng. Trong bảng, phải có đủ khai báo từ style/direct formatting để không phụ thuộc table style chưa resolve. XML định dạng gốc vẫn được giữ khi export.
-
-Text không chứa prefix `<ox:` hoặc `</ox:` được xem là plain. Nếu tài liệu chứa các prefix đó theo nghĩa đen, Filehandler bọc nội dung bằng run và escape, ví dụ:
+Text thường không chứa `<ox:` hoặc `</ox:` có thể được trả trực tiếp. Khi literal nguồn chứa prefix dành riêng, `TranslationTokenSyntax.EncodeLiteral()` bọc bằng một run và escape, kể cả TXT:
 
 ```text
-Tài liệu: Use <ox:b0/> literally.
-Import:   <ox:r0>Use \<ox:b0/> literally.</ox:r0>
+Source: Use <ox:b0/> literally.
+Import: <ox:r0>Use \<ox:b0/> literally.</ox:r0>
 ```
 
-TXT cũng áp dụng cách bọc này khi cần. Client gửi nguyên chuỗi đã import và nguyên chuỗi model trả về, không tự bỏ token hay unescape. Filehandler export giải mã và phục hồi literal nguồn.
+## Tạo và restore
 
-Translator kiểm tra cú pháp, đủ ID, thứ tự boundary và vùng của từng token trước khi lưu kết quả. Lỗi `token_syntax`, `token_identity`, `token_region`, `empty_translation` khiến đoạn bị retry tối đa ba attempt, sau đó fallback nguồn. Filehandler kiểm tra lại khi export và còn áp dụng ràng buộc riêng của từng định dạng; đọc cả `errors` và `metadata.skipped`.
+| Format | Tạo token | Export restore |
+|---|---|---|
+| Markdown | `MarkdownExtractor.Extract()` tạo marker/template nội bộ; `MarkdownTokenCodec.Encode()` xuất token `ox`. | `MarkdownTokenCodec.Decode()` kiểm tra token, map về marker nguồn; `MarkdownTranslationApplier.Apply()` restore formatting/protected spans và escape text. |
+| Word/Excel/PowerPoint | `OfficeTemplateBuilder` tạo slots, anchors, bindings; `OfficeTextCodec.Encode()` xuất token theo scope. | `OfficeTextCodec.ValidateAndDecode()` decode theo ID; applier dùng bindings và source XML để apply text/fragment. |
+| TXT | `TranslationTokenSyntax.EncodeLiteral()` chỉ bọc literal có prefix dành riêng. | `PlainTextService.ExportAsync()` validate run, decode literal và nối lại source separators. |
 
-Markdown khôi phục cấu trúc nguồn bằng đối tượng nội bộ. HTML trong tài liệu người dùng được bảo toàn như nội dung nguồn.
+`TranslationTokenSyntax.Encode()` chèn boundary khi chuyển scope. `Compact()` ẩn boundary đầu/cuối và rút nhóm boundary liên tiếp ở giữa còn một token; dữ liệu nguồn vẫn giữ nội bộ. `Expand()` phục hồi nhóm boundary khi restore. Template chỉ có một run và không có movable anchor có thể xuất plain text nếu không đụng prefix dành riêng.
 
-Đây là thay đổi contract không tương thích với các bản import cũ. Dừng các service, cập nhật và khởi động lại, reload client rồi import lại file. Migration SQLite v2 giữ dữ liệu cũ nhưng không cho resume phiên dùng contract cũ. Không ghép Filehandler mới với Translator cũ hoặc ngược lại. [`token-fixtures.json`](../tests/FileHandler.Tests/Fixtures/token-fixtures.json) là bộ mẫu chung được kiểm tra bằng cả C# và Python.
+Source file được đọc lại khi Export để dựng template; request không truyền bảng placeholder hay token metadata. Token đại diện cho nội dung nguồn, không mang toàn bộ nội dung đó trong bản dịch.
+
+## Invalid hoặc missing token
+
+`TranslationTokenParser.Validate()` kiểm tra syntax, tập ID và vùng boundary. Thiếu/lặp/đổi ID, escape sai hoặc chuyển token qua boundary không hợp lệ. Mã parser nội bộ như `token_syntax`, `token_identity`, `token_region`, `empty_translation` được caller chuyển thành lỗi/skip của format.
+
+- Markdown: lỗi decode được ghi thành warning của unit, ví dụ `invalid_marker_syntax`; restore source cho unit lỗi.
+- Office: token mismatch thành `office_token_mismatch`; giữ source slots cho unit lỗi.
+- TXT có literal đã bọc: token sai thành `invalid_translation`, giữ paragraph nguồn.
+- Quota/count/null không được chuyển thành token fallback; xem [validation](runtime.md#validation--error-handling).
+
+## Example Markdown
+
+Example khớp assertion trong [FilesApiTests.MarkdownWireTokensRoundTripThroughHttp()](../tests/FileHandler.Tests/Api/FilesApiTests.cs):
+
+```text
+Source
+Before **red** after `code`
+
+→ Extracted text
+<ox:r0>Before </ox:r0><ox:r1>red</ox:r1><ox:r2> after </ox:r2><ox:k0/>
+
+→ Translated text
+<ox:r0>Before </ox:r0><ox:r1>đỏ</ox:r1><ox:r2> after </ox:r2><ox:k0/>
+
+→ Output
+Before **đỏ** after `code`
+```
+
+Nguồn chính: [TranslationTokenSyntax.cs](../src/FileHandler.Api/Common/TranslationTokenSyntax.cs), [TranslationTokenParser.cs](../src/FileHandler.Api/Common/TranslationTokenParser.cs), [MarkdownTokenCodec.cs](../src/FileHandler.Api/Modules/Markdown/MarkdownTokenCodec.cs), [OfficeTextCodec.cs](../src/FileHandler.Api/Modules/Office/OfficeTextCodec.cs).
