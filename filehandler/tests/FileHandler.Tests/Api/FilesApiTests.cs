@@ -240,7 +240,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
     {
         using var form = new MultipartFormDataContent();
         form.Add(new ByteArrayContent(Utf8TextReader.Encode("# Hello\r\n\r\nWorld\r\n", true)), "file", "C:\\fake\\guide.TXT");
-        var json = JsonSerializer.Serialize(new[] { "# Xin chào\nDòng mới", "<keepme01> **Thế giới**" });
+        var json = JsonSerializer.Serialize(new[] { "# Xin chào\nDòng mới", "<custom-tag> **Thế giới**" });
         if (uploadJson)
             form.Add(new ByteArrayContent(Encoding.UTF8.GetBytes(json)), "texts", "translations.json");
         else
@@ -249,7 +249,7 @@ public sealed class FilesApiTests : IClassFixture<WebApplicationFactory<Program>
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/plain; charset=utf-8", (await MultipartResponse.ReadAsync(response)).ContentType);
         Assert.Equal("guide.TXT", (await MultipartResponse.ReadAsync(response)).FileName);
-        Assert.Equal(Utf8TextReader.Encode("# Xin chào\nDòng mới\r\n\r\n<keepme01> **Thế giới**\r\n", true), (await MultipartResponse.ReadAsync(response)).Bytes);
+        Assert.Equal(Utf8TextReader.Encode("# Xin chào\nDòng mới\r\n\r\n<custom-tag> **Thế giới**\r\n", true), (await MultipartResponse.ReadAsync(response)).Bytes);
     }
 
     /// <summary>

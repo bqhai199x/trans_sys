@@ -130,7 +130,7 @@ public sealed class MarkdownTranslationApplierTests
     public void Apply_RestoresFormattingAndProtectedContent()
     {
         var result = MarkdownTranslationApplier.Apply(Extraction("**Hello** `code`"),
-            ["<ox:r0>Bonjour</ox:r0><ox:k0/><ox:k1/>"], new(), default);
+            ["<ox:r0>Bonjour</ox:r0><ox:b0/><ox:k1/>"], new(), default);
         Assert.Empty(result.Errors);
         Assert.Equal("**Bonjour** `code`", result.Text);
         var invalid = MarkdownTranslationApplier.Apply(Extraction("Read `code`"),

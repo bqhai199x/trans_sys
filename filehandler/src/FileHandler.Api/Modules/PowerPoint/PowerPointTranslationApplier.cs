@@ -6,7 +6,7 @@ using FileHandler.Api.Modules.Office;
 namespace FileHandler.Api.Modules.PowerPoint;
 
 /// <summary>
-/// Applies changed translations exclusively through verified scalar bindings.
+/// Applies translations through verified scalar bindings and reconstructed inline regions.
 /// </summary>
 public sealed class PowerPointTranslationApplier
 {
@@ -61,7 +61,7 @@ public sealed class PowerPointTranslationApplier
 
             if (!map.TryGetValue(unit.Location.PartUri, out var part) || part.RootElement is null)
                 throw new InvalidOperationException("Missing target part.");
-            OfficeTextBindings.Apply(part.RootElement, unit, decoded);
+            OfficeTextBindings.Apply(part.RootElement, unit, decoded, patch.EditMasks[unit.Location.PartUri]);
         }
         foreach (var uri in patch.EditMasks.Keys)
         {

@@ -106,7 +106,7 @@ public sealed class MarkdownExtractorTests
     {
         var unit = Assert.Single(Extract(source).Units);
         Assert.Contains(unit.Markers.Values, marker => marker.Kind == MarkerKind.Protected && marker.OpenSource == protectedSource);
-        Assert.Contains("<ox:k0/>", unit.Text);
+        Assert.Contains(protectedSource.StartsWith("<b>", StringComparison.Ordinal) ? "<ox:b0/>" : "<ox:k0/>", unit.Text);
     }
 
     /// <summary>
@@ -117,7 +117,7 @@ public sealed class MarkdownExtractorTests
     public void Extract_EncodesNestedFormattingAndDecodedLiterals()
     {
         var unit = Assert.Single(Extract("Read **bold *inner*** &amp; \\*literal\\*").Units);
-        Assert.Equal("<ox:r0>Read </ox:r0><ox:r1>bold </ox:r1><ox:r2>inner</ox:r2><ox:k0/><ox:k1/><ox:r3> *literal*</ox:r3>", unit.Text);
+        Assert.Equal("<ox:r0>Read </ox:r0><ox:r1>bold </ox:r1><ox:r2>inner</ox:r2><ox:b0/><ox:r3> *literal*</ox:r3>", unit.Text);
         Assert.Equal("&amp;", unit.Markers[3].OpenSource);
         Assert.Equal("**", unit.Markers[1].OpenSource);
         Assert.Equal("*", unit.Markers[2].CloseSource);

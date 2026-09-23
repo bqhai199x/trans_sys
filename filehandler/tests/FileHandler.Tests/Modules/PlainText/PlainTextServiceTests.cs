@@ -55,10 +55,10 @@ public sealed class PlainTextServiceTests
         var imported = await Import(service, source);
         Assert.Empty(imported.Errors);
         Assert.Equal(new[] { "Hello world.\r\nThis is line two.", "# This is plain text." }, imported.Texts);
-        var exported = await Export(service, source, "Xin chào.\n\nThêm một đoạn.", "# <keepme01> **Văn bản** &copy;");
+        var exported = await Export(service, source, "Xin chào.\n\nThêm một đoạn.", "# <custom-tag> **Văn bản** &copy;");
         Assert.Empty(exported.Errors);
         Assert.Equal(PlainTextService.ContentType, exported.ContentType);
-        Assert.Equal("Xin chào.\n\nThêm một đoạn.\r\n\r\n# <keepme01> **Văn bản** &copy;\r\n", Encoding.UTF8.GetString(exported.Content!));
+        Assert.Equal("Xin chào.\n\nThêm một đoạn.\r\n\r\n# <custom-tag> **Văn bản** &copy;\r\n", Encoding.UTF8.GetString(exported.Content!));
     }
 
     /// <summary>
@@ -72,7 +72,7 @@ public sealed class PlainTextServiceTests
     [InlineData("one")]
     [InlineData("one\r\n")]
     [InlineData("\r\n \t\r\n  Chào 😀e\u0301 \t\r\nB\n\n# hi\r  \t")]
-    [InlineData("```\n[link](https://example.com)\n```\n\n<keepme1>\n\n123")]
+    [InlineData("```\n[link](https://example.com)\n```\n\n<custom-tag>\n\n123")]
     public async Task IdentityIsBytePerfect(string text)
     {
         foreach (var bom in new[] { false, true })

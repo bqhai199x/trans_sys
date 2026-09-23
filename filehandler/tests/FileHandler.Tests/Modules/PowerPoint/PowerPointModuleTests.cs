@@ -50,8 +50,8 @@ public sealed class PowerPointModuleTests
         Assert.Empty(importResult.Errors);
         Assert.Equal(3, importResult.Texts.Count);
         Assert.Equal("A", importResult.Texts[0]);
-        // Cell with break produces break token <ox:k0/>
-        Assert.Contains("<ox:k0/>", importResult.Texts[1]);
+        // Cell with break produces break token <ox:b0/>
+        Assert.Contains("<ox:b0/>", importResult.Texts[1]);
         Assert.Equal("D", importResult.Texts[2]);
     }
 

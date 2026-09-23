@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using FileHandler.Api.Common;
 using DocumentFormat.OpenXml;
 
 namespace FileHandler.Api.Modules.Office;
@@ -67,6 +68,26 @@ internal sealed class OfficeTemplateBuilder
     private bool _merge;
 
     /// <summary>
+    /// Deterministic scopes keyed by source container identity.
+    /// </summary>
+    private readonly Dictionary<OpenXmlElement, string> _scopes = new(ReferenceEqualityComparer.Instance);
+
+    /// <summary>
+    /// Resolves safe ownership for complete physical runs.
+    /// </summary>
+    /// <param name="node">Source scalar or protected subtree.</param>
+    /// <returns>Stable movement scope or isolated fragment scope.</returns>
+    private string Scope(OpenXmlElement node)
+    {
+        var physical = node.Parent?.LocalName == "r" ? node.Parent : node;
+        var owner = physical.Parent ?? physical;
+        if (node is OpenXmlLeafTextElement text && text.Text.IndexOfAny(['\r', '\n', '\t']) >= 0)
+            owner = node;
+        if (!_scopes.TryGetValue(owner, out var scope)) _scopes[owner] = scope = "s" + _scopes.Count;
+        return scope;
+    }
+
+    /// <summary>
     /// Adds a text node with exact address and formatting context.
     /// </summary>
     /// <param name="node">Source text scalar.</param>
@@ -102,7 +123,8 @@ internal sealed class OfficeTemplateBuilder
         var value = node.Text.Substring(offset, length);
         _characters += length;
         if (_characters > _limits.MaxPlanChars) throw new FileHandler.Api.Common.FileLimitException("office_plan_limit_exceeded");
-        var canMerge = _merge && _slots[^1].FormatFingerprint == fingerprint;
+        var scope = Scope(node);
+        var canMerge = _merge && _slots[^1].FormatFingerprint == fingerprint && _slots[^1].Scope == scope;
         if (string.IsNullOrWhiteSpace(value) && (!canMerge || value.IndexOfAny(['\r', '\n', '\t']) >= 0))
         {
             Anchor(node, AnchorKind.Whitespace);
@@ -119,7 +141,7 @@ internal sealed class OfficeTemplateBuilder
         {
             CheckTokenBudget();
             slotId = $"r{_slots.Count}";
-            _slots.Add(new(slotId, "", fingerprint));
+            _slots.Add(new(slotId, "", fingerprint) { Scope = scope });
             _texts.Add(new StringBuilder(value));
             _order.Add(slotId);
         }
@@ -140,10 +162,15 @@ internal sealed class OfficeTemplateBuilder
     internal void Anchor(OpenXmlElement node, AnchorKind kind)
     {
         CheckTokenBudget();
-        var id = $"k{_anchors.Count}";
+        var movable = node is DocumentFormat.OpenXml.Wordprocessing.SimpleField or DocumentFormat.OpenXml.Drawing.Field ||
+            kind == AnchorKind.Picture && node.Parent?.LocalName == "r";
+        var id = (movable ? "k" : "b") + _anchors.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (!_anchorHashes.TryGetValue(node, out var sourceHash))
             _anchorHashes[node] = sourceHash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(node.OuterXml)));
-        _anchors.Add(new(id, kind, sourceHash));
+        _anchors.Add(new(id, kind, sourceHash)
+        {
+            Scope = Scope(node), Path = OfficeTextBindings.Path(node)
+        });
         _order.Add(id);
         _merge = false;
     }
@@ -163,6 +190,6 @@ internal sealed class OfficeTemplateBuilder
     /// </summary>
     /// <returns>Ordered template, or null for protected-only content.</returns>
     internal OfficeTextTemplate? Build() => _slots.Count == 0 ? null : new(
-        _slots.Count == 1 && _anchors.Count == 0 ? UnitMode.Plain : UnitMode.Structured,
+        _slots.Count == 1 && _anchors.All(a => a.AnchorId[0] == 'b') && !TranslationTokenSyntax.IsStructured(_texts[0].ToString()) ? UnitMode.Plain : UnitMode.Structured,
         _slots.Select((slot, index) => slot with { OriginalText = _texts[index].ToString() }).ToArray(), _anchors.ToArray(), _bindings.ToArray(), _order.ToArray());
 }

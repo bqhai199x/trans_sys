@@ -117,66 +117,13 @@ public sealed class MarkdownPrimitiveTests
     }
 
     /// <summary>
-    /// Verifies matching marker delimiters parse correctly.
-    /// </summary>
-    /// <param name="id">Marker ID.</param>
-    /// <returns>No return value.</returns>
-    [Theory]
-    [InlineData(1)]
-    [InlineData(int.MaxValue)]
-    public void MarkerDelimiters_ParseAsMatchingPair(int id)
-    {
-        Assert.Equal($"<keepme{id}>", MarkdownMarkerCodec.Open(id));
-        Assert.Equal($"<keepme{id}/>", MarkdownMarkerCodec.Close(id));
-        Assert.Equal(new[]
-        {
-            new MarkerToken(false, 0, "before", false),
-            new MarkerToken(true, id, $"<keepme{id}>", false),
-            new MarkerToken(false, 0, "inside", false),
-            new MarkerToken(true, id, $"<keepme{id}/>", true),
-            new MarkerToken(false, 0, "after", false)
-        }, MarkdownMarkerCodec.Parse($"before<keepme{id}>inside<keepme{id}/>after"));
-    }
-
-    /// <summary>
-    /// Verifies malformed markers remain literal text.
-    /// </summary>
-    /// <param name="text">Text to process.</param>
-    /// <returns>No return value.</returns>
-    [Theory]
-    [InlineData("<keepme>")]
-    [InlineData("<keepme0>")]
-    [InlineData("<keepme-1>")]
-    [InlineData("<keepme1")]
-    [InlineData("<keepme1/")]
-    [InlineData("<keepme2147483648>")]
-    [InlineData("<Keepme1>")]
-    public void Parse_PreservesMalformedMarkersAsText(string text)
-    {
-        Assert.Equal(new MarkerToken(false, 0, text, false), Assert.Single(MarkdownMarkerCodec.Parse(text)));
-        Assert.Empty(MarkdownMarkerCodec.FindReservedIds(text));
-    }
-
-    /// <summary>
-    /// Verifies empty input and noncanonical marker parsing.
-    /// </summary>
-    /// <returns>No return value.</returns>
-    [Fact]
-    public void Parse_HandlesEmptyAndNonCanonicalMarkers()
-    {
-        Assert.Empty(MarkdownMarkerCodec.Parse(""));
-        Assert.Equal(new MarkerToken(true, 1, "<keepme01>", false), Assert.Single(MarkdownMarkerCodec.Parse("<keepme01>")));
-    }
-
-    /// <summary>
     /// Verifies allocation skips reserved and previously allocated IDs.
     /// </summary>
     /// <returns>No return value.</returns>
     [Fact]
     public void AllocateId_SkipsReservedAndPreviouslyAllocatedIds()
     {
-        var reserved = MarkdownMarkerCodec.FindReservedIds("<keepme1><keepme0003/><keepme1><keepme2147483647>");
-        Assert.Equal(new[] { 1, 3, int.MaxValue }, reserved.Order());
+        var reserved = new HashSet<int> { 1, 3, int.MaxValue };
         var allocator = new MarkerAllocationContext(reserved);
         Assert.Equal(2, allocator.AllocateId());
         Assert.Equal(4, allocator.AllocateId());

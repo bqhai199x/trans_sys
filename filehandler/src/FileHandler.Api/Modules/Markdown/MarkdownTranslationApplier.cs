@@ -158,24 +158,30 @@ internal static class MarkdownTranslationApplier
         var errors = new List<FileError>();
         if (unit.IsMermaidLabel)
         {
+            if (TranslationTokenSyntax.IsStructured(unit.Text))
+            {
+                if (TranslationTokenParser.Validate(unit.Text, translation) is not null)
+                    return (null, [new(SkipCodes.InvalidMarkerSyntax, ProcessingMessages.MarkdownTokens, index, unit.Line)]);
+                translation = TranslationTokenParser.Parse(validationBaseline ? unit.Text : translation)[0].Text!;
+            }
             if (translation.Any(char.IsControl))
                 return (null, [new(SkipCodes.InvalidStructure, ProcessingMessages.MermaidStructure, index, unit.Line)]);
-            var value = MermaidCodec.Encode(validationBaseline ? unit.Text : translation, unit.MermaidQuoted);
+            var value = MermaidCodec.Encode(validationBaseline && !TranslationTokenSyntax.IsStructured(unit.Text) ? unit.Text : translation, unit.MermaidQuoted);
             return (value, errors);
         }
         IReadOnlyList<MarkerToken> rawTokens;
         if (unit.TokenTemplate is { } template)
         {
-            var decoded = MarkdownTokenCodec.Decode(template, translation, index, unit.Line);
+            var decoded = MarkdownTokenCodec.Decode(template, translation, index, unit.Line, validationBaseline);
             if (decoded.Error is not null)
                 return (null, [decoded.Error]);
-            rawTokens = validationBaseline
+            rawTokens = validationBaseline && !template.Structured
                 ? decoded.Tokens.Select((token, i) => !token.IsMarker && !string.IsNullOrWhiteSpace(token.Value)
                     ? token with { Value = template.Tokens[i].Value } : token).ToArray()
                 : decoded.Tokens;
         }
         else
-            rawTokens = MarkdownMarkerCodec.Parse(translation);
+            rawTokens = [new MarkerToken(false, 0, translation, false)];
         var tokens = CanonicalizeFormattingTokens(rawTokens, unit.Markers);
         var emptyEmphasis = FindEmptyEmphasis(tokens, unit.Markers);
         var seenOpen = new HashSet<int>();
@@ -188,18 +194,7 @@ internal static class MarkdownTranslationApplier
             {
                 if (token.Value.Length > 0 && stack.TryPeek(out var owner) && unit.Markers[owner].Kind == MarkerKind.Protected)
                     errors.Add(new(SkipCodes.ProtectedMarkerNotEmpty, ProcessingMessages.ProtectedMarkerNotEmpty, index, unit.Line));
-                if (unit.TokenTemplate is null && token.Value.Contains(MarkdownMarkerCodec.MarkerPrefix, StringComparison.Ordinal))
-                    errors.Add(new(SkipCodes.InvalidMarkerSyntax, ProcessingMessages.LegacyMarkerSyntax, index, unit.Line));
                 output.Append(EscapeText(token.Value, unit.NewlineReplacement));
-                continue;
-            }
-
-            var canonical = unit.TokenTemplate is null
-                ? (token.IsClosing ? MarkdownMarkerCodec.Close(token.Id) : MarkdownMarkerCodec.Open(token.Id))
-                : token.Value;
-            if (!string.Equals(token.Value, canonical, StringComparison.Ordinal))
-            {
-                errors.Add(new(SkipCodes.InvalidMarkerSyntax, ProcessingMessages.NoncanonicalMarker(token.Value, canonical), index, unit.Line, token.Value));
                 continue;
             }
 
@@ -211,14 +206,14 @@ internal static class MarkdownTranslationApplier
 
             if (!token.IsClosing)
             {
-                if (!seenOpen.Add(token.Id))
+                if (!seenOpen.Add(token.Id) && unit.TokenTemplate is null)
                     errors.Add(new(SkipCodes.DuplicateMarker, ProcessingMessages.DuplicateMarker(token.Value), index, unit.Line, token.Value));
                 stack.Push(token.Id);
                 if (!emptyEmphasis.Contains(token.Id)) output.Append(definition.OpenSource);
             }
             else
             {
-                if (!seenClose.Add(token.Id))
+                if (!seenClose.Add(token.Id) && unit.TokenTemplate is null)
                     errors.Add(new(SkipCodes.DuplicateMarker, ProcessingMessages.DuplicateMarker(token.Value), index, unit.Line, token.Value));
                 if (stack.Count == 0 || stack.Pop() != token.Id)
                     errors.Add(new(SkipCodes.InvalidMarkerNesting, ProcessingMessages.InvalidMarkerNesting(token.Value), index, unit.Line, token.Value));
@@ -228,10 +223,11 @@ internal static class MarkdownTranslationApplier
 
         foreach (var marker in unit.Markers.Values)
         {
+            if (unit.TokenTemplate is not null && marker.IsEmphasis) continue;
             if (!seenOpen.Contains(marker.Id))
-                errors.Add(new(SkipCodes.MissingMarker, ProcessingMessages.MissingOpeningMarker(MarkdownMarkerCodec.Open(marker.Id)), index, unit.Line, MarkdownMarkerCodec.Open(marker.Id)));
+                errors.Add(new(SkipCodes.MissingMarker, ProcessingMessages.MarkdownTokens, index, unit.Line));
             if (!seenClose.Contains(marker.Id))
-                errors.Add(new(SkipCodes.MissingMarker, ProcessingMessages.MissingClosingMarker(MarkdownMarkerCodec.Close(marker.Id)), index, unit.Line, MarkdownMarkerCodec.Close(marker.Id)));
+                errors.Add(new(SkipCodes.MissingMarker, ProcessingMessages.MarkdownTokens, index, unit.Line));
         }
 
         return errors.Count == 0 ? (output.ToString(), errors) : (null, errors);

@@ -233,7 +233,7 @@ public sealed class ExcelModuleTests
     public async Task E12_IdentityExport_ReturnsExactSourceBytes()
     {
         var service = CreateService();
-        var xlsx = OfficeFixtureFactory.CreateExcelWithInlineStrings(new[] { new[] { "KeepMe" } });
+        var xlsx = OfficeFixtureFactory.CreateExcelWithInlineStrings(new[] { new[] { "Unchanged" } });
 
         using var importStream = new MemoryStream(xlsx);
         var importResult = await service.ImportAsync(importStream);

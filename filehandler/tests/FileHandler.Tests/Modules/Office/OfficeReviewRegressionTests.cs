@@ -20,6 +20,41 @@ public sealed class OfficeReviewRegressionTests
 {
 
     /// <summary>
+    /// Applies request XML limits during final Word structure validation.
+    /// </summary>
+    /// <returns>No return value.</returns>
+    [Fact]
+    public void Word_StructureValidationHonorsConfiguredXmlLimit()
+    {
+        var source = OfficeFixtureFactory.CreateWordDocument(new string('x', 8_000_001));
+        var plan = new WordPlan("source", [], [new WordStorySnapshot("Body", "/word/document.xml", 1)], []);
+        var validator = new WordStructureValidator();
+        Assert.Throws<System.Xml.XmlException>(() => validator.Validate(source, plan, default));
+        Assert.True(validator.Validate(source, plan, default, new OfficeProcessingOptions { MaxXmlCharactersPerPart = 12_000_000 }).IsValid);
+    }
+
+    /// <summary>
+    /// Reconstructs text fragments sharing a physical run without losing protected field content.
+    /// </summary>
+    /// <returns>Task completing after source binding and output XML assertions.</returns>
+    [Fact]
+    public async Task Word_ReordersPhysicalFragmentsAroundInlineField()
+    {
+        var source = OfficeFixtureFactory.CreateWordDocumentWithElements(new W.Paragraph(
+            new W.Run(new W.RunProperties(new W.Bold()), new W.Text("red"), new W.Text(" car")),
+            new W.SimpleField(new W.Run(new W.Text("2.0"))) { Instruction = "VERSION" },
+            new W.Run(new W.Text(" required"))));
+        var service = WordService.Create();
+        var output = await service.ExportAsync(new MemoryStream(source), ["<ox:r1>Cần </ox:r1><ox:r0>xe đỏ </ox:r0><ox:k0/>"]);
+        Assert.Empty(output.Errors);
+        Assert.DoesNotContain(output.Metadata.Skipped, skip => skip.Severity == SkipSeverity.Warning);
+        using var document = WordprocessingDocument.Open(new MemoryStream(output.Content!), false);
+        Assert.Equal("Cần xe đỏ 2.0", document.MainDocumentPart!.Document!.InnerText);
+        Assert.Equal("VERSION", document.MainDocumentPart.Document.Descendants<W.SimpleField>().Single().Instruction!.Value);
+        Assert.Contains(document.MainDocumentPart.Document.Descendants<W.Run>(), run => run.InnerText == "xe đỏ " && run.RunProperties?.GetFirstChild<W.Bold>() is not null);
+    }
+
+    /// <summary>
     /// Verifies partial bindings preserve raw control characters within one scalar.
     /// </summary>
     /// <returns>Task completing after assertions.</returns>
@@ -30,8 +65,8 @@ public sealed class OfficeReviewRegressionTests
         var service = WordService.Create();
         var import = await service.ImportAsync(new MemoryStream(bytes));
         Assert.Empty(import.Errors);
-        Assert.Equal("<ox:r0>A</ox:r0><ox:k0/><ox:r1>B</ox:r1><ox:k1/><ox:r2>C</ox:r2>", Assert.Single(import.Texts));
-        var output = await Export(service, bytes, ["<ox:r0>X</ox:r0><ox:k0/><ox:r1>Y</ox:r1><ox:k1/><ox:r2>Z</ox:r2>"]);
+        Assert.Equal("<ox:r0>A</ox:r0><ox:b0/><ox:r1>B</ox:r1><ox:b1/><ox:r2>C</ox:r2>", Assert.Single(import.Texts));
+        var output = await Export(service, bytes, ["<ox:r0>X</ox:r0><ox:b0/><ox:r1>Y</ox:r1><ox:b1/><ox:r2>Z</ox:r2>"]);
         using var doc = WordprocessingDocument.Open(new MemoryStream(output), false);
         Assert.Equal("X\tY\nZ", doc.MainDocumentPart!.Document!.Body!.InnerText);
     }
@@ -121,11 +156,11 @@ public sealed class OfficeReviewRegressionTests
     }
 
     /// <summary>
-    /// Verifies simple field cached text remains protected before editable text.
+    /// Verifies simple field cached text remains protected when moved as a complete subtree.
     /// </summary>
     /// <returns>Task completing after assertions.</returns>
     [Fact]
-    public async Task Word_LeadingField_RetainsOrderAndValue()
+    public async Task Word_LeadingField_CanMoveAndRetainsValue()
     {
         var bytes = OfficeFixtureFactory.CreateWordDocumentWithElements(new W.Paragraph(
             new W.SimpleField(new W.Run(new W.Text("FIELD"))) { Instruction = "DATE" },
@@ -138,9 +173,11 @@ public sealed class OfficeReviewRegressionTests
         using var doc = WordprocessingDocument.Open(new MemoryStream(output), false);
         Assert.Equal("FIELDChanged", doc.MainDocumentPart!.Document!.Body!.InnerText);
         var reordered = await service.ExportAsync(new MemoryStream(bytes), ["<ox:r0>Changed</ox:r0><ox:k0/>"]);
-        Assert.Equal(bytes, reordered.Content);
         Assert.Empty(reordered.Errors);
-        Assert.Contains(reordered.Metadata.Skipped, e => e.Code == "office_token_mismatch");
+        Assert.Empty(reordered.Metadata.Skipped);
+        using var moved = WordprocessingDocument.Open(new MemoryStream(reordered.Content!), false);
+        Assert.Equal("ChangedFIELD", moved.MainDocumentPart!.Document!.Body!.InnerText);
+        Assert.Equal("DATE", moved.MainDocumentPart.Document.Descendants<W.SimpleField>().Single().Instruction!.Value);
     }
 
     /// <summary>

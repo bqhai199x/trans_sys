@@ -48,47 +48,17 @@ public sealed class OfficeTextCodec
             return template.Slots.Count > 0 ? template.Slots[0].OriginalText : string.Empty;
         }
 
-        var sb = new StringBuilder();
-        if (template.Order is not null)
-        {
-            var slotsById = template.Slots.ToDictionary(s => s.SlotId);
-            foreach (var id in template.Order)
-            {
-                if (slotsById.TryGetValue(id, out var slot))
-                {
-                    sb.Append(TranslationTokenSyntax.Open(id));
-                    TranslationTokenSyntax.AppendEscaped(sb, slot.OriginalText);
-                    sb.Append(TranslationTokenSyntax.Close(id));
-                }
-                else sb.Append(TranslationTokenSyntax.Anchor(id));
-            }
-            return sb.ToString();
-        }
-        var slotIndex = 0;
-        var anchorIndex = 0;
-
-        // In structured mode, weave slots and anchors based on template order
-        // If template specifies slots and anchors sequentially:
-        while (slotIndex < template.Slots.Count || anchorIndex < template.Anchors.Count)
-        {
-            if (slotIndex < template.Slots.Count)
-            {
-                var slot = template.Slots[slotIndex];
-                sb.Append(TranslationTokenSyntax.Open(slot.SlotId));
-                TranslationTokenSyntax.AppendEscaped(sb, slot.OriginalText);
-                sb.Append(TranslationTokenSyntax.Close(slot.SlotId));
-                slotIndex++;
-            }
-
-            if (anchorIndex < template.Anchors.Count)
-            {
-                var anchor = template.Anchors[anchorIndex];
-                sb.Append(TranslationTokenSyntax.Anchor(anchor.AnchorId));
-                anchorIndex++;
-            }
-        }
-
-        return sb.ToString();
+        var slots = template.Slots.ToDictionary(s => s.SlotId);
+        var anchors = template.Anchors.ToDictionary(a => a.AnchorId);
+        var order = template.Order ?? Enumerable.Range(0, Math.Max(template.Slots.Count, template.Anchors.Count))
+            .SelectMany(i => (i < template.Slots.Count ? new[] { template.Slots[i].SlotId } : [])
+                .Concat(i < template.Anchors.Count ? new[] { template.Anchors[i].AnchorId } : [])).ToArray();
+        var parts = order.Select(id => new TranslationTokenPart(id, slots.TryGetValue(id, out var slot) ? slot.OriginalText : null)).ToArray();
+        var scopes = order.Select(id => slots.TryGetValue(id, out var slot) ? slot.Scope ?? "s0" : anchors[id].Scope).ToArray();
+        var encoded = TranslationTokenSyntax.Encode(parts, scopes);
+        if (TranslationTokenParser.Parse(encoded).Count > _options.MaxTokensPerUnit)
+            throw new FileLimitException("office_plan_limit_exceeded");
+        return encoded;
     }
 
     /// <summary>
@@ -207,7 +177,7 @@ public sealed class OfficeTextCodec
                         continue;
                     }
 
-                    decodedUnits[i] = new OfficeDecodedUnit(i, rawText, decodedSlots!);
+                    decodedUnits[i] = new OfficeDecodedUnit(i, rawText, decodedSlots!) { Parts = TranslationTokenParser.Parse(rawText) };
                 }
             }
 
@@ -242,208 +212,31 @@ public sealed class OfficeTextCodec
         decodedSlots = null;
         error = null;
 
-        var slots = new List<string>(unit.Slots.Count);
-        var expectedOrder = ReadOrder(unit.EncodedSource);
-        var tokenIndex = 0;
-        var expectedSlotIndex = 0;
-        var expectedAnchorIndex = 0;
-        var totalTokens = unit.Slots.Count + unit.Anchors.Count;
-
-        if (totalTokens > _options.MaxTokensPerUnit)
+        var failure = TranslationTokenParser.Validate(unit.EncodedSource, input);
+        if (failure is not null)
         {
-            error = new FileError("office_plan_limit_exceeded", ProcessingMessages.UnitTokenLimit(totalTokens, _options.MaxTokensPerUnit)) { Index = unitIndex };
+            error = new FileError(failure == "empty_translation" ? SkipCodes.EmptyTranslation : SkipCodes.OfficeTokenMismatch, ProcessingMessages.TokenOrder) { Index = unitIndex };
             return false;
         }
-
-        var pos = 0;
-        var len = input.Length;
-        var totalCellChars = 0;
-
-        while (pos < len)
+        var parts = TranslationTokenParser.Parse(input);
+        if (parts.Count > _options.MaxTokensPerUnit)
         {
-            if (input[pos] != '<')
-            {
-                error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.TextOutsideToken) { Index = unitIndex };
-                return false;
-            }
-
-            // Must start with <ox:
-            if (pos + 4 >= len || input[pos + 1] != 'o' || input[pos + 2] != 'x' || input[pos + 3] != ':')
-            {
-                error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.InvalidTokenPrefix) { Index = unitIndex };
-                return false;
-            }
-
-            pos += 4; // Skip <ox:
-            var tagStart = pos;
-
-            while (pos < len && input[pos] != '>' && input[pos] != '/')
-                pos++;
-
-            if (pos >= len)
-            {
-                error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.UnterminatedToken) { Index = unitIndex };
-                return false;
-            }
-
-            var tagName = input[tagStart..pos];
-            if (tokenIndex >= expectedOrder.Count || expectedOrder[tokenIndex++] != tagName)
-            {
-                error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.TokenOrder) { Index = unitIndex };
-                return false;
-            }
-
-            if (input[pos] == '/' && pos + 1 < len && input[pos + 1] == '>')
-            {
-                // Self-closing tag <ox:kN/>
-                pos += 2;
-                if (!tagName.StartsWith('k'))
-                {
-                    error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.InvalidSelfClosingToken(tagName)) { Index = unitIndex, Marker = tagName };
-                    return false;
-                }
-
-                if (expectedAnchorIndex >= unit.Anchors.Count || unit.Anchors[expectedAnchorIndex].AnchorId != tagName)
-                {
-                    error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.MismatchedAnchor(tagName)) { Index = unitIndex, Marker = tagName };
-                    return false;
-                }
-
-                expectedAnchorIndex++;
-            }
-            else if (input[pos] == '>')
-            {
-                // Opening slot tag <ox:rN>
-                pos++;
-                if (!tagName.StartsWith('r'))
-                {
-                    error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.InvalidOpeningToken(tagName)) { Index = unitIndex, Marker = tagName };
-                    return false;
-                }
-
-                if (expectedSlotIndex >= unit.Slots.Count || unit.Slots[expectedSlotIndex].SlotId != tagName)
-                {
-                    error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.MismatchedSlot(tagName)) { Index = unitIndex, Marker = tagName };
-                    return false;
-                }
-
-                // Read slot content until </ox:rN>
-                var closingTag = $"</ox:{tagName}>";
-                var slotContentSb = new StringBuilder();
-                var closed = false;
-
-                while (pos < len)
-                {
-                    if (input[pos] == '\\')
-                    {
-                        if (pos + 1 >= len)
-                        {
-                            error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.DanglingEscape) { Index = unitIndex, Marker = tagName };
-                            return false;
-                        }
-                        var next = input[pos + 1];
-                        if (next is '\\' or '<')
-                        {
-                            slotContentSb.Append(next);
-                            pos += 2;
-                        }
-                        else
-                        {
-                            error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.InvalidEscape(next)) { Index = unitIndex, Marker = tagName };
-                            return false;
-                        }
-                    }
-                    else if (input[pos] == '<')
-                    {
-                        // Check if it's the closing tag
-                        if (input.AsSpan(pos).StartsWith(closingTag, StringComparison.Ordinal))
-                        {
-                            pos += closingTag.Length;
-                            closed = true;
-                            break;
-                        }
-                        else
-                        {
-                            error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.UnescapedSlotTag) { Index = unitIndex, Marker = tagName };
-                            return false;
-                        }
-                    }
-                    else
-                    {
-                        slotContentSb.Append(input[pos]);
-                        pos++;
-                    }
-                }
-
-                if (!closed)
-                {
-                    error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.MissingClosingToken(closingTag)) { Index = unitIndex, Marker = tagName };
-                    return false;
-                }
-
-                var slotText = slotContentSb.ToString();
-                if (format != OfficeFormat.Excel && (slotText.Contains('\r') || slotText.Contains('\n') || slotText.Contains('\t')))
-                {
-                    error = new FileError(SkipCodes.InvalidTranslation, ProcessingMessages.InvalidSlotWhitespace(tagName)) { Index = unitIndex, Marker = tagName };
-                    return false;
-                }
-
-                if (format == OfficeFormat.Excel)
-                {
-                    slotText = NormalizeExcelNewlines(slotText);
-                    totalCellChars += slotText.Length;
-                    if (totalCellChars > _options.MaxCellTextChars)
-                    {
-                        error = new FileError("office_translation_limit_exceeded", ProcessingMessages.TotalCellTextLimit(_options.MaxCellTextChars)) { Index = unitIndex, Marker = tagName };
-                        return false;
-                    }
-                }
-
-                slots.Add(slotText);
-                expectedSlotIndex++;
-            }
-            else
-            {
-                error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.InvalidTokenSyntax) { Index = unitIndex };
-                return false;
-            }
-        }
-
-        if (expectedSlotIndex != unit.Slots.Count || expectedAnchorIndex != unit.Anchors.Count)
-        {
-            error = new FileError(SkipCodes.OfficeTokenMismatch, ProcessingMessages.TokenCount) { Index = unitIndex };
+            error = new FileError("office_plan_limit_exceeded", ProcessingMessages.UnitTokenLimit(parts.Count, _options.MaxTokensPerUnit)) { Index = unitIndex };
             return false;
         }
-
-        if (slots.All(string.IsNullOrWhiteSpace))
+        var values = parts.Where(p => p.Text is not null).ToDictionary(p => p.Id, p => p.Text!);
+        if (format != OfficeFormat.Excel && values.Values.Any(t => t.IndexOfAny(['\r', '\n', '\t']) >= 0))
         {
-            error = new FileError(SkipCodes.EmptyTranslation, ProcessingMessages.EmptySlots) { Index = unitIndex };
+            error = new FileError(SkipCodes.InvalidTranslation, ProcessingMessages.RawOfficeWhitespace) { Index = unitIndex };
             return false;
         }
-
-        decodedSlots = slots;
+        decodedSlots = unit.Slots.Select(s => format == OfficeFormat.Excel ? NormalizeExcelNewlines(values[s.SlotId]) : values[s.SlotId]).ToArray();
+        if (format == OfficeFormat.Excel && decodedSlots.Sum(s => s.Length) > _options.MaxCellTextChars)
+        {
+            error = new FileError("office_translation_limit_exceeded", ProcessingMessages.TotalCellTextLimit(_options.MaxCellTextChars)) { Index = unitIndex };
+            return false;
+        }
         return true;
-    }
-
-    /// <summary>
-    /// Reads canonical token order while skipping escaped source text.
-    /// </summary>
-    /// <param name="source">Canonical encoded source.</param>
-    /// <returns>Opening slot and anchor identifiers.</returns>
-    private static IReadOnlyList<string> ReadOrder(string source)
-    {
-        var result = new List<string>();
-        for (var i = 0; i < source.Length; i++)
-        {
-            if (source[i] == '\\') { i++; continue; }
-            if (!source.AsSpan(i).StartsWith("<ox:")) continue;
-            var start = i + 4;
-            var end = start;
-            while (end < source.Length && source[end] != '>' && source[end] != '/') end++;
-            result.Add(source[start..end]);
-            i = end;
-        }
-        return result;
     }
 
     /// <summary>

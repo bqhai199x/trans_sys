@@ -40,20 +40,20 @@ public sealed class MarkdownProfileTests
     }
 
     /// <summary>
-    /// Verifies that literal markers survive translation without ID collisions.
+    /// Preserves custom inline HTML while translating surrounding text.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
-    public async Task LiteralProtocolMarkerIsCollisionSafe()
+    public async Task CustomInlineHtmlSurvivesTranslation()
     {
         var service = Create();
-        var bytes = Encoding.UTF8.GetBytes("Read <keepme1> literally and **translate me**.");
+        var bytes = Encoding.UTF8.GetBytes("Read <custom-tag> literally and **translate me**.");
         var imported = await service.ImportAsync(new MemoryStream(bytes), TestContext.Current.CancellationToken);
-        Assert.Contains("<ox:k0/>", imported.Texts.Single(), StringComparison.Ordinal);
+        Assert.Contains("<ox:b0/>", imported.Texts.Single(), StringComparison.Ordinal);
         var changed = imported.Texts.Single().Replace("translate me", "dịch tôi", StringComparison.Ordinal);
         var exported = await service.ExportAsync(new MemoryStream(bytes), [changed], TestContext.Current.CancellationToken);
         Assert.Empty(exported.Errors);
-        Assert.Equal("Read <keepme1> literally and **dịch tôi**.", Encoding.UTF8.GetString(exported.Content!));
+        Assert.Equal("Read <custom-tag> literally and **dịch tôi**.", Encoding.UTF8.GetString(exported.Content!));
     }
 
     /// <summary>
@@ -141,8 +141,8 @@ public sealed class MarkdownProfileTests
         var service = Create();
         var source = Encoding.UTF8.GetBytes("> First line\r\n> second line\r\n");
         var imported = await service.ImportAsync(new MemoryStream(source), TestContext.Current.CancellationToken);
-        Assert.Equal(["<ox:r0>First line</ox:r0><ox:k0/><ox:r1>second line</ox:r1>"], imported.Texts);
-        var exported = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>Dòng một</ox:r0><ox:k0/><ox:r1>Dòng hai</ox:r1>"], TestContext.Current.CancellationToken);
+        Assert.Equal(["<ox:r0>First line</ox:r0><ox:b0/><ox:r1>second line</ox:r1>"], imported.Texts);
+        var exported = await service.ExportAsync(new MemoryStream(source), ["<ox:r0>Dòng một</ox:r0><ox:b0/><ox:r1>Dòng hai</ox:r1>"], TestContext.Current.CancellationToken);
         Assert.Empty(exported.Errors);
         Assert.Equal("> Dòng một\r\n> Dòng hai\r\n", Encoding.UTF8.GetString(exported.Content!));
     }

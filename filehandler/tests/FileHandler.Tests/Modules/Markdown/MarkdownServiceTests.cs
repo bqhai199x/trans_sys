@@ -28,9 +28,9 @@ public sealed class MarkdownServiceTests
         var service = Create();
         var imported = await service.ImportAsync(new MemoryStream(Encoding.UTF8.GetBytes(markdown)));
         Assert.Empty(imported.Errors);
-        Assert.Equal(new[] { "Quick start", "<ox:r0>Read </ox:r0><ox:r1>the guide</ox:r1><ox:r2> at </ox:r2><ox:r3>our website</ox:r3><ox:r4>, then run </ox:r4><ox:k0/><ox:r5>.</ox:r5>" }, imported.Texts);
+        Assert.Equal(new[] { "Quick start", "<ox:r0>Read </ox:r0><ox:r1>the guide</ox:r1><ox:r2> at </ox:r2><ox:b0/><ox:r3>our website</ox:r3><ox:b1/><ox:r4>, then run </ox:r4><ox:k0/><ox:r5>.</ox:r5>" }, imported.Texts);
 
-        var translated = new[] { "Bắt đầu nhanh", "<ox:r0>Đọc </ox:r0><ox:r1>hướng dẫn</ox:r1><ox:r2> tại </ox:r2><ox:r3>trang web của chúng tôi</ox:r3><ox:r4>, sau đó chạy </ox:r4><ox:k0/><ox:r5>.</ox:r5>" };
+        var translated = new[] { "Bắt đầu nhanh", "<ox:r0>Đọc </ox:r0><ox:r1>hướng dẫn</ox:r1><ox:r2> tại </ox:r2><ox:b0/><ox:r3>trang web của chúng tôi</ox:r3><ox:b1/><ox:r4>, sau đó chạy </ox:r4><ox:k0/><ox:r5>.</ox:r5>" };
         var exported = await service.ExportAsync(new MemoryStream(Encoding.UTF8.GetBytes(markdown)), translated);
         Assert.Empty(exported.Errors);
         Assert.Equal("# Bắt đầu nhanh\n\nĐọc **hướng dẫn** tại [trang web của chúng tôi](https://example.com), sau đó chạy `npm install`.\n", Encoding.UTF8.GetString(exported.Content!));
@@ -161,19 +161,19 @@ public sealed class MarkdownServiceTests
     }
 
     /// <summary>
-    /// Verifies that source text containing literal marker prefix does not trigger syntax validation errors.
+    /// Preserves an incomplete HTML tag as escaped literal text during translation.
     /// </summary>
     /// <returns>Task representing test completion.</returns>
     [Fact]
-    public async Task Export_AllowsLiteralMarkerPrefixInSource()
+    public async Task Export_AllowsIncompleteHtmlTagInSource()
     {
-        const string source = "Read <keepme literally";
+        const string source = "Read <custom-tag literally";
         var service = Create();
         var imported = await service.ImportAsync(new MemoryStream(Encoding.UTF8.GetBytes(source)));
         var translations = imported.Texts.Select(t => t.Replace("Read", "Lire")).ToArray();
         var exported = await service.ExportAsync(new MemoryStream(Encoding.UTF8.GetBytes(source)), translations);
         Assert.Empty(exported.Errors);
-        Assert.Equal(@"Lire \<keepme literally", Encoding.UTF8.GetString(exported.Content!));
+        Assert.Equal(@"Lire \<custom\-tag literally", Encoding.UTF8.GetString(exported.Content!));
     }
 
     /// <summary>

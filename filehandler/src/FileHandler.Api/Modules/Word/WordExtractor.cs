@@ -303,7 +303,7 @@ public sealed class WordExtractor : IWordExtractor
                 var owner = run?.Parent;
                 var context = owner is W.Hyperlink ? string.Concat(owner.GetAttributes().Select(a => $"{a.NamespaceUri}:{a.LocalName}:{a.Value?.Length ?? 0}:{a.Value}")) +
                     string.Join("/", OfficeTextBindings.Path(owner).Select(p => p.SiblingOrdinal)) : "";
-                builder.Text(text, partUri, OfficeStyleFingerprint.Create(run?.RunProperties) + context);
+                builder.Text(text, partUri, WordRunFingerprint.Create(run) + context);
             }
             else if (child is W.SimpleField or W.FieldCode)
                 builder.Anchor(child, AnchorKind.Field);

@@ -1,0 +1,177 @@
+[
+  {
+    "name": "plain literal",
+    "source": "literal <tag>",
+    "candidate": "translated <tag>",
+    "error": null,
+    "fixed_order": false
+  },
+  {
+    "name": "plain empty",
+    "source": "hello",
+    "candidate": "",
+    "error": "empty_translation",
+    "fixed_order": false
+  },
+  {
+    "name": "same region",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r1>xe </ox:r1><ox:r0>đỏ</ox:r0>",
+    "error": null,
+    "fixed_order": false
+  },
+  {
+    "name": "optional fixed order",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r1>xe </ox:r1><ox:r0>đỏ</ox:r0>",
+    "error": "token_order",
+    "fixed_order": true
+  },
+  {
+    "name": "missing",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r0>x</ox:r0>",
+    "error": "token_identity",
+    "fixed_order": false
+  },
+  {
+    "name": "duplicate",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r0>x</ox:r0><ox:r0>y</ox:r0>",
+    "error": "token_identity",
+    "fixed_order": false
+  },
+  {
+    "name": "unknown",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r0>x</ox:r0><ox:r2>y</ox:r2>",
+    "error": "token_identity",
+    "fixed_order": false
+  },
+  {
+    "name": "leading zero",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r00>x</ox:r00><ox:r1>y</ox:r1>",
+    "error": "token_syntax",
+    "fixed_order": false
+  },
+  {
+    "name": "nested",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r0><ox:r1>x</ox:r1></ox:r0>",
+    "error": "token_syntax",
+    "fixed_order": false
+  },
+  {
+    "name": "wrong close",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r0>x</ox:r1>",
+    "error": "token_syntax",
+    "fixed_order": false
+  },
+  {
+    "name": "bad escape",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r0>\\q</ox:r0><ox:r1>y</ox:r1>",
+    "error": "token_syntax",
+    "fixed_order": false
+  },
+  {
+    "name": "outside",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "x<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "error": "token_syntax",
+    "fixed_order": false
+  },
+  {
+    "name": "empty unit",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r0></ox:r0><ox:r1> </ox:r1>",
+    "error": "empty_translation",
+    "fixed_order": false
+  },
+  {
+    "name": "empty run",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r0></ox:r0><ox:r1>xe đỏ</ox:r1>",
+    "error": null,
+    "fixed_order": false
+  },
+  {
+    "name": "escaped unicode",
+    "source": "<ox:r0>red</ox:r0><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r0>😀 \\\\ \\<literal</ox:r0><ox:r1>đỏ</ox:r1>",
+    "error": null,
+    "fixed_order": false
+  },
+  {
+    "name": "ownership",
+    "source": "<ox:r0>red</ox:r0><ox:b0/><ox:r1> car</ox:r1>",
+    "candidate": "<ox:r1>xe </ox:r1><ox:b0/><ox:r0>đỏ</ox:r0>",
+    "error": "token_region",
+    "fixed_order": false
+  },
+  {
+    "name": "inline",
+    "source": "<ox:r0>Version </ox:r0><ox:k0/><ox:r1> required</ox:r1>",
+    "candidate": "<ox:r1>Cần </ox:r1><ox:r0>phiên bản </ox:r0><ox:k0/>",
+    "error": null,
+    "fixed_order": false
+  },
+  {
+    "name": "barrier",
+    "source": "<ox:r0>Version </ox:r0><ox:b0/><ox:r1> required</ox:r1>",
+    "candidate": "<ox:r1>Cần </ox:r1><ox:r0>phiên bản </ox:r0><ox:b0/>",
+    "error": "token_region",
+    "fixed_order": false
+  },
+  {
+    "name": "anchors reorder",
+    "source": "<ox:r0>A</ox:r0><ox:k0/><ox:k1/>",
+    "candidate": "<ox:k1/><ox:r0>B</ox:r0><ox:k0/>",
+    "error": null,
+    "fixed_order": false
+  },
+  {
+    "name": "anchor crosses barrier",
+    "source": "<ox:r0>A</ox:r0><ox:k0/><ox:b0/><ox:r1>B</ox:r1>",
+    "candidate": "<ox:r0>A</ox:r0><ox:b0/><ox:k0/><ox:r1>B</ox:r1>",
+    "error": "token_region",
+    "fixed_order": false
+  },
+  {
+    "name": "barriers swap",
+    "source": "<ox:b0/><ox:r0>A</ox:r0><ox:b1/>",
+    "candidate": "<ox:b1/><ox:r0>B</ox:r0><ox:b0/>",
+    "error": "token_region",
+    "fixed_order": false
+  },
+  {
+    "name": "change barrier kind",
+    "source": "<ox:r0>A</ox:r0><ox:b0/>",
+    "candidate": "<ox:r0>B</ox:r0><ox:k0/>",
+    "error": "token_identity",
+    "fixed_order": false
+  },
+  {
+    "name": "barrier leading zero",
+    "source": "<ox:r0>A</ox:r0><ox:b0/>",
+    "candidate": "<ox:r0>B</ox:r0><ox:b00/>",
+    "error": "token_syntax",
+    "fixed_order": false
+  },
+  {
+    "name": "literal reserved escaped",
+    "source": "<ox:r0>Use \\<ox:b0/></ox:r0>",
+    "candidate": "<ox:r0>Keep \\<ox:b0/></ox:r0>",
+    "error": null,
+    "fixed_order": false
+  },
+  {
+    "name": "invalid source prefix",
+    "source": "Use <ox:r0>literal",
+    "candidate": "hello",
+    "error": "token_syntax",
+    "fixed_order": false
+  }
+]

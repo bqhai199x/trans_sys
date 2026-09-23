@@ -6,7 +6,7 @@ using FileHandler.Api.Modules.Office;
 namespace FileHandler.Api.Modules.Word;
 
 /// <summary>
-/// Applies changed translations exclusively through verified scalar bindings.
+/// Applies translations through verified scalar bindings and reconstructed inline regions.
 /// </summary>
 public sealed class WordTranslationApplier
 {
@@ -37,7 +37,7 @@ public sealed class WordTranslationApplier
     }
 
     /// <summary>
-    /// Patches bound scalars and serializes changed parts only.
+    /// Applies nested units before owner reconstruction and serializes changed parts only.
     /// </summary>
     /// <param name="session">Atomic export session.</param>
     /// <param name="doc">Read-only source package.</param>
@@ -48,19 +48,14 @@ public sealed class WordTranslationApplier
     {
         IEnumerable<OpenXmlPart> parts = doc.MainDocumentPart is null ? [] : new OpenXmlPart[] { doc.MainDocumentPart }.Concat(doc.MainDocumentPart.HeaderParts).Concat(doc.MainDocumentPart.FooterParts).Concat(new OpenXmlPart?[] { doc.MainDocumentPart.FootnotesPart, doc.MainDocumentPart.EndnotesPart }.OfType<OpenXmlPart>());
         var map = parts.ToDictionary(p => "/" + p.Uri.ToString().TrimStart('/'), StringComparer.OrdinalIgnoreCase);
-        for (var i = 0; i < patch.Plan.Units.Count; i++)
+        var translations = patch.Plan.Units.Select((unit, index) => (Unit: unit, Decoded: patch.DecodedUnits[index]))
+            .Where(pair => OfficeTextBindings.Changed(pair.Unit, pair.Decoded));
+        foreach (var group in translations.GroupBy(pair => pair.Unit.Location.PartUri, StringComparer.OrdinalIgnoreCase))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var unit = patch.Plan.Units[i];
-            var decoded = patch.DecodedUnits[i];
-            if (!OfficeTextBindings.Changed(unit, decoded))
-            {
-                continue;
-            }
-
-            if (!map.TryGetValue(unit.Location.PartUri, out var part) || part.RootElement is null)
+            if (!map.TryGetValue(group.Key, out var part) || part.RootElement is null)
                 throw new InvalidOperationException("Missing target part.");
-            OfficeTextBindings.Apply(part.RootElement, unit, decoded);
+            OfficeTextBindings.ApplyNested(part.RootElement, group.ToArray(), patch.EditMasks[group.Key], cancellationToken);
         }
         foreach (var uri in patch.EditMasks.Keys)
         {

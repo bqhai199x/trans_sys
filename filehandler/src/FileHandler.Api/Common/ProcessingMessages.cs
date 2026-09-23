@@ -209,12 +209,7 @@ internal static class ProcessingMessages
     /// <summary>
     /// MarkdownTokens diagnostic message.
     /// </summary>
-    internal const string MarkdownTokens = "Preserve source tokens, order and escapes.";
-
-    /// <summary>
-    /// LegacyMarkerSyntax diagnostic message.
-    /// </summary>
-    internal const string LegacyMarkerSyntax = "Invalid keepme marker syntax or ID.";
+    internal const string MarkdownTokens = "Preserve token IDs, escapes and bN boundaries; reorder rN/kN only within each region.";
 
     /// <summary>
     /// ProtectedMarkerNotEmpty diagnostic message.
@@ -324,7 +319,7 @@ internal static class ProcessingMessages
     /// <summary>
     /// TokenOrder diagnostic message.
     /// </summary>
-    internal const string TokenOrder = "Token order differs from source.";
+    internal const string TokenOrder = "Token syntax, IDs or bN boundary regions differ from source.";
 
     /// <summary>
     /// DanglingEscape diagnostic message.

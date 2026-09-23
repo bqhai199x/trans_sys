@@ -236,15 +236,35 @@ public sealed record OfficeLocation(
 /// <param name="SlotId">Slot identifier such as r0.</param>
 /// <param name="OriginalText">Original decoded plain text of slot.</param>
 /// <param name="FormatFingerprint">Fingerprint of explicit run formatting properties.</param>
-public sealed record OfficeTextSlot(string SlotId, string OriginalText, string FormatFingerprint);
+public sealed record OfficeTextSlot(string SlotId, string OriginalText, string FormatFingerprint)
+{
+
+    /// <summary>
+    /// Source ownership scope; null for manually constructed templates.
+    /// </summary>
+    public string? Scope { get; init; }
+}
 
 /// <summary>
 /// Non-translatable anchor preserved in structured text.
 /// </summary>
-/// <param name="AnchorId">Anchor identifier such as k0.</param>
+/// <param name="AnchorId">Movable anchor or fixed boundary identifier such as k0 or b0.</param>
 /// <param name="Kind">Category of protected anchor.</param>
 /// <param name="SourceFingerprint">Fingerprint of underlying XML element.</param>
-public sealed record OfficeProtectedAnchor(string AnchorId, AnchorKind Kind, string SourceFingerprint);
+public sealed record OfficeProtectedAnchor(string AnchorId, AnchorKind Kind, string SourceFingerprint)
+{
+
+    /// <summary>
+    /// Source ownership scope.
+    /// </summary>
+    public string Scope { get; init; } = "s0";
+
+    /// <summary>
+    /// Root-relative source subtree address.
+    /// </summary>
+    public IReadOnlyList<OfficeElementPathSegment>? Path { get; init; }
+
+}
 
 /// <summary>
 /// Physical XML binding mapping slot text to target XML node.
@@ -482,7 +502,14 @@ public sealed record OfficeReadResult(OfficeSource? Source, IReadOnlyList<FileEr
 /// <param name="Index">Zero-based unit index.</param>
 /// <param name="EncodedInput">Original encoded input text.</param>
 /// <param name="DecodedSlots">Decoded plain text values for each slot in order.</param>
-public sealed record OfficeDecodedUnit(int Index, string EncodedInput, IReadOnlyList<string> DecodedSlots);
+public sealed record OfficeDecodedUnit(int Index, string EncodedInput, IReadOnlyList<string> DecodedSlots)
+{
+
+    /// <summary>
+    /// Validated parts in output order; empty for scalar-only callers.
+    /// </summary>
+    public IReadOnlyList<TranslationTokenPart> Parts { get; init; } = [];
+}
 
 /// <summary>
 /// Result of decoding caller-supplied translation texts.
@@ -554,6 +581,11 @@ public sealed record OfficeEditMask(
     /// Exact attribute edits, limited to explicitly planned rename references.
     /// </summary>
     public IReadOnlyList<OfficeAttributeEdit> AttributeEdits { get; init; } = [];
+
+    /// <summary>
+    /// Exact source and candidate regions reconstructed from verified bindings.
+    /// </summary>
+    public Dictionary<string, (string Source, string Candidate)> Regions { get; } = new(StringComparer.Ordinal);
 }
 
 /// <summary>

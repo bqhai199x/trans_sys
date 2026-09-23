@@ -9,11 +9,11 @@ internal static class OfficeMetadata
 {
 
     /// <summary>
-    /// Describes mapping size without allocating public units or location strings.
+    /// Projects mapping size and token movement permissions without XML addresses.
     /// </summary>
     /// <param name="format">Lowercase source format.</param>
     /// <param name="units">Extracted source units.</param>
-    /// <returns>Metadata containing mapping size only.</returns>
+    /// <returns>Metadata containing mapping size and ordered token permissions.</returns>
     internal static FileMetadata Describe(string format, IReadOnlyList<OfficeTranslationUnit> units) => FileMetadata.Create(format) with
     {
         UnitCount = units.Count

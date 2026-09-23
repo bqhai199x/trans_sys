@@ -70,7 +70,7 @@ public sealed class PlainTextService : IFileHandler
         {
             cancellationToken.ThrowIfCancellationRequested();
             var unit = units[i];
-            texts[i] = document.Text[unit.Start..unit.End];
+            texts[i] = TranslationTokenSyntax.EncodeLiteral(document.Text[unit.Start..unit.End]);
         }
         return new(texts, []) { Metadata = metadata };
     }
@@ -105,12 +105,28 @@ public sealed class PlainTextService : IFileHandler
         if (segmentError is not null)
             return new(null, ContentType, [segmentError]) { Metadata = metadata.ForExport(true) };
         metadata = Describe(units, false, cancellationToken).ForExport();
-        var errors = ValidateTranslations(units, translations, cancellationToken);
+        var errors = ValidateTranslations(units, translations, cancellationToken).ToList();
         var fatal = errors.Where(e => e.Code is "translation_count_mismatch" or "translation_too_long" ||
             e.Index is int i && translations[i] is null).ToArray();
         if (fatal.Length > 0)
             return new(null, ContentType, fatal) { Metadata = metadata.ForExport(true) };
-        var effective = errors.Count == 0 ? translations : translations.ToArray();
+        string[]? decoded = null;
+        for (var i = 0; i < units.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var original = document.Text[units[i].Start..units[i].End];
+            if (!TranslationTokenSyntax.IsStructured(original)) continue;
+            decoded ??= translations.ToArray();
+            var encoded = TranslationTokenSyntax.EncodeLiteral(original);
+            var failure = TranslationTokenParser.Validate(encoded, decoded[i]);
+            if (failure is not null)
+            {
+                errors.Add(new(SkipCodes.InvalidTranslation, ProcessingMessages.MarkdownTokens, i, units[i].Line));
+                decoded[i] = original;
+            }
+            else decoded[i] = TranslationTokenParser.Parse(decoded[i])[0].Text!;
+        }
+        IReadOnlyList<string> effective = decoded ?? (errors.Count == 0 ? translations : translations.ToArray());
         var skipped = new List<SkipMetadata>();
         foreach (var issue in errors)
         {
