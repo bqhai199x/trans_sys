@@ -191,11 +191,11 @@ public sealed class OfficeTextCodecAndBindingTests
     }
 
     /// <summary>
-    /// Verifies reordered tokens retain source slots with office_token_mismatch (CD09).
+    /// Verifies reordered runs map translated values to original slot identities.
     /// </summary>
     /// <returns>No return value.</returns>
     [Fact]
-    public void Decode_ReorderedTokens_PreservesSourceSlots()
+    public void Decode_ReorderedTokens_MapsSourceSlots()
     {
         var codec = new OfficeTextCodec(DefaultOfficeOptions, DefaultFileOptions);
         var unit = MakeUnit(
@@ -212,9 +212,9 @@ public sealed class OfficeTextCodecAndBindingTests
             default);
 
         Assert.Empty(result.Errors);
-        Assert.Equal(unit.EncodedSource, Assert.Single(result.DecodedUnits!).EncodedInput);
-        Assert.Equal(unit.Slots.Select(s => s.OriginalText), result.DecodedUnits![0].DecodedSlots);
-        Assert.Contains(result.Skipped, e => e.Code == "office_token_mismatch" && e.UnitIndex == 0);
+        Assert.Equal("<ox:r1>The gioi</ox:r1><ox:r0>Xin chao</ox:r0>", Assert.Single(result.DecodedUnits!).EncodedInput);
+        Assert.Equal(new[] { "Xin chao", "The gioi" }, result.DecodedUnits![0].DecodedSlots);
+        Assert.Empty(result.Skipped);
     }
 
     /// <summary>

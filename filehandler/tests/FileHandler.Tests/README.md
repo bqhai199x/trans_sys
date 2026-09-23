@@ -16,13 +16,15 @@ Các unit test gọi trực tiếp method public/internal. Method private đư�
 | PlainTextSegmenter | PlainTextSegmenterTests | Chia đoạn theo dòng trống, literal syntax, CR/LF/CRLF/mixed, Unicode whitespace, spans/line ranges và quota |
 | PlainTextService | PlainTextServiceTests | Import/export TXT, identity bytes, giữ separator, error locations, giới hạn UTF-16/UTF-8, output allocation và concurrency |
 | MarkdownSourceReader, LineMap | MarkdownSourceReaderTests, MarkdownPrimitiveTests | UTF-8 nghiêm ngặt, BOM, vị trí dòng, giới hạn byte, cancellation |
-| MarkdownMarkerCodec, MarkerAllocationContext | MarkdownMarkerCodecTests, MarkdownPrimitiveTests | Parse, marker lỗi, ID biên, cấp ID không trùng |
+| TranslationTokenParser, MarkerAllocationContext | TranslationTokenParserTests, MarkdownPrimitiveTests | Cú pháp r/k/b, ID, boundary, escape và cấp ID nội bộ không trùng |
 | MarkdownProfile, MarkdownExtractor | MarkdownExtractorTests, MarkdownProfileTests | Parse, spans, cấu trúc, formatting lồng nhau, nội dung bảo vệ, newline, giới hạn unit |
 | MarkdownTranslationApplier | MarkdownTranslationApplierTests | ValidateBatch, DecodeTranslation, EscapeText thông qua Apply; validation, marker, patch, cancellation |
 | MarkdownService | MarkdownServiceTests, MarkdownServiceBoundaryTests, MarkdownProfileTests | Import/export, round trip, giới hạn tài nguyên, lỗi nguồn, concurrency |
 | MarkdownController, PlainTextController | FilesControllerTests | Import, Export, ErrorResult/Errors qua action, JSON contract, HTTP status, download |
 | WordController, ExcelController, PowerPointController | OfficeControllerTests | Import, Export Office qua action, JSON contract, metadata header, download |
 | OfficePackageValidator, OfficeSource, skip metadata | OfficeOptimizationTests | Snapshot độc lập với buffer của caller, cache vẫn kiểm tra output/selection/quota, gọi validation lặp, skip ẩn giữ đúng vùng bảo toàn và số đếm khi lỗi |
+| OfficeTextBindings, OfficeXmlInvariant | OfficeReorderingRegressionTests | Đổi thứ tự run có raw control, dịch textbox lồng nhau, giữ bảng/định dạng và từ chối chỉnh sửa ngoài kế hoạch |
+| MarkdownTokenCodec | SelfDescribingTokenTests | HTML cố định, autolink/code/ảnh được bảo vệ di chuyển trong vùng hợp lệ |
 | ExcelRenamePlanner, ExcelFormulaReferences | ExcelRenameReviewTests, ExcelRenameCollisionTests | Structured reference, hyperlink, conditional formatting, VML/control fallback, Unicode tên sheet, suffix trùng sau truncate và tên giữ chỗ |
 | GlobalExceptionHandler | GlobalExceptionHandlerTests | HTTP 413/500 và không lộ nội dung exception |
 

@@ -59,23 +59,41 @@ internal static class MarkdownTokenCodec
             }
         }
 
-        var structured = runs != 1 || anchors != 0;
-        var builder = new StringBuilder();
+        var stacks = new Dictionary<string, IReadOnlyList<int>>();
+        var active = new List<int>();
+        var byIndex = parts.ToDictionary(p => p.TokenIndexes[0]);
+        for (var i = 0; i < tokens.Count; i++)
+        {
+            if (byIndex.TryGetValue(i, out var part)) stacks[part.Id] = active.ToArray();
+            var token = tokens[i];
+            if (!token.IsMarker || inline.Markers[token.Id].Kind != MarkerKind.Formatting) continue;
+            if (token.IsClosing) active.RemoveAt(active.Count - 1);
+            else active.Add(token.Id);
+        }
+        var scopes = new List<string>();
+        var wireParts = new List<MarkdownTokenPart>();
         foreach (var part in parts)
         {
-            if (!structured)
-                builder.Append(part.SourceText);
-            else if (part.IsAnchor)
-                builder.Append(TranslationTokenSyntax.Anchor(part.Id));
-            else
+            var owner = string.Join("/", stacks[part.Id].Where(id => !inline.Markers[id].IsEmphasis));
+            scopes.Add(owner);
+            var id = part.Id;
+            if (part.IsAnchor)
             {
-                builder.Append(TranslationTokenSyntax.Open(part.Id));
-                TranslationTokenSyntax.AppendEscaped(builder, part.SourceText);
-                builder.Append(TranslationTokenSyntax.Close(part.Id));
+                var token = tokens[part.TokenIndexes[0]];
+                var movable = token.IsMarker && inline.Markers[token.Id].IsMovable;
+                if (!movable) id = "b" + part.Id[1..];
             }
+            stacks[id] = stacks[part.Id];
+            wireParts.Add(part with { Id = id });
         }
-        var text = builder.ToString();
-        return (text, new(structured, tokens, parts));
+        var fullSource = TranslationTokenSyntax.Encode(wireParts.Select(p => new TranslationTokenPart(p.Id, p.IsAnchor ? null : p.SourceText)).ToArray(), scopes, false);
+        var fullParts = TranslationTokenParser.Parse(fullSource);
+        var visible = TranslationTokenSyntax.Compact(fullParts);
+        var structured = visible.Count != 1 || visible[0].Text is null || TranslationTokenSyntax.IsStructured(visible[0].Text!);
+        var text = structured
+            ? TranslationTokenSyntax.Encode(wireParts.Select(p => new TranslationTokenPart(p.Id, p.IsAnchor ? null : p.SourceText)).ToArray(), scopes)
+            : visible[0].Text!;
+        return (text, new(structured, tokens, wireParts) { Source = text, Owners = stacks, FullParts = fullParts });
     }
 
     /// <summary>
@@ -85,37 +103,44 @@ internal static class MarkdownTokenCodec
     /// <param name="translation">Public translation string.</param>
     /// <param name="index">Zero-based translation index.</param>
     /// <param name="line">Original source line range.</param>
+    /// <param name="baseline">Whether to restore source text in translated token order.</param>
     /// <returns>Restoration tokens or validation error without partial tokens.</returns>
     internal static (IReadOnlyList<MarkerToken> Tokens, FileError? Error) Decode(
-        MarkdownTokenTemplate template, string translation, int index, SourceLineRange line)
+        MarkdownTokenTemplate template, string translation, int index, SourceLineRange line, bool baseline = false)
     {
-        var restored = template.Tokens.ToArray();
-        var offset = 0;
-        var hasContent = false;
-        foreach (var part in template.Parts)
+        if (template.Structured)
         {
-            var marker = part.IsAnchor ? TranslationTokenSyntax.Anchor(part.Id) : TranslationTokenSyntax.Open(part.Id);
-            string text;
-            if (!template.Structured)
-                text = translation;
-            else
+            var error = TranslationTokenParser.Validate(template.Source, translation);
+            if (error is not null) return Reject(index, line, error == "empty_translation" ? SkipCodes.EmptyTranslation : SkipCodes.InvalidMarkerSyntax, null);
+            var output = new List<MarkerToken>();
+            var active = new List<int>();
+            var bindings = template.Parts.ToDictionary(p => p.Id);
+            foreach (var part in TranslationTokenSyntax.Expand(template.FullParts, TranslationTokenParser.Parse(translation)))
             {
-                if (!translation.AsSpan(offset).StartsWith(marker, StringComparison.Ordinal))
-                    return Reject(index, line, SkipCodes.InvalidMarkerSyntax, marker);
-                offset += marker.Length;
-                if (part.IsAnchor)
-                    continue;
-                if (!TranslationTokenSyntax.TryReadText(translation, ref offset, TranslationTokenSyntax.Close(part.Id), out text))
-                    return Reject(index, line, SkipCodes.InvalidMarkerSyntax, marker);
+                if (!bindings.TryGetValue(part.Id, out var binding)) continue; // Synthetic scope boundary has no source content.
+                var owners = template.Owners[part.Id];
+                var common = 0;
+                while (common < active.Count && common < owners.Count && active[common] == owners[common]) common++;
+                for (var i = active.Count - 1; i >= common; i--) output.Add(new(true, active[i], "", true));
+                for (var i = common; i < owners.Count; i++) output.Add(new(true, owners[i], "", false));
+                active = owners.ToList();
+                if (part.Text is not null) output.Add(new(false, 0, baseline && !string.IsNullOrWhiteSpace(part.Text) ? binding.SourceText : part.Text, false));
+                else
+                {
+                    var token = template.Tokens[binding.TokenIndexes[0]];
+                    output.Add(token);
+                    if (token.IsMarker) output.Add(new(true, token.Id, "", true));
+                }
             }
-            hasContent |= !string.IsNullOrWhiteSpace(text);
-            foreach (var tokenIndex in part.TokenIndexes)
-                restored[tokenIndex] = restored[tokenIndex] with { Value = tokenIndex == part.TokenIndexes[0] ? text : string.Empty };
+            for (var i = active.Count - 1; i >= 0; i--) output.Add(new(true, active[i], "", true));
+            return (output, null);
         }
-        if (template.Structured && offset != translation.Length)
-            return Reject(index, line, SkipCodes.InvalidMarkerSyntax, null);
-        if (!hasContent)
+        if (string.IsNullOrWhiteSpace(translation))
             return Reject(index, line, SkipCodes.EmptyTranslation, null);
+        var restored = template.Tokens.ToArray();
+        foreach (var part in template.Parts.Where(p => !p.IsAnchor))
+            foreach (var tokenIndex in part.TokenIndexes)
+                restored[tokenIndex] = restored[tokenIndex] with { Value = tokenIndex == part.TokenIndexes[0] ? translation : string.Empty };
         return (restored, null);
     }
 
@@ -143,7 +168,26 @@ internal static class MarkdownTokenCodec
 /// <param name="Structured">Whether public text uses run and anchor tokens.</param>
 /// <param name="Tokens">Original internal restoration tokens.</param>
 /// <param name="Parts">Ordered public runs and anchors.</param>
-internal sealed record MarkdownTokenTemplate(bool Structured, IReadOnlyList<MarkerToken> Tokens, IReadOnlyList<MarkdownTokenPart> Parts);
+internal sealed record MarkdownTokenTemplate(bool Structured, IReadOnlyList<MarkerToken> Tokens, IReadOnlyList<MarkdownTokenPart> Parts)
+{
+
+    /// <summary>
+    /// Complete source sequence retaining hidden fixed objects for restoration.
+    /// </summary>
+    internal IReadOnlyList<TranslationTokenPart> FullParts { get; init; } = [];
+
+    /// <summary>
+    /// Canonical source used for movement validation.
+    /// </summary>
+    internal string Source { get; init; } = "";
+
+    /// <summary>
+    /// Formatting and ownership stack for each public token.
+    /// </summary>
+    internal IReadOnlyDictionary<string, IReadOnlyList<int>> Owners { get; init; } = new Dictionary<string, IReadOnlyList<int>>();
+
+
+}
 
 /// <summary>
 /// Public run or anchor mapped to original restoration token.

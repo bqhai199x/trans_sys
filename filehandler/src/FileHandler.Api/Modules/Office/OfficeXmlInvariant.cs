@@ -7,7 +7,7 @@ using System.Xml.Linq;
 namespace FileHandler.Api.Modules.Office;
 
 /// <summary>
-/// Compares XML structure while allowing text scalars and append-only shared strings.
+/// Compares XML outside exact scalar edits, reconstructed regions and appended shared strings.
 /// </summary>
 internal static class OfficeXmlInvariant
 {
@@ -40,6 +40,19 @@ internal static class OfficeXmlInvariant
         var before = Read(source, limits);
         var after = Read(output, limits);
         if (before.Name != after.Name) return false;
+        var verifiedRegions = new Dictionary<XElement, XElement>();
+        if (mask.Regions.Count > 0)
+        {
+            var originals = Index(before);
+            var candidates = Index(after);
+            foreach (var (path, region) in mask.Regions)
+            {
+                if (!originals.TryGetValue(path, out var original) || !candidates.TryGetValue(path, out var candidate) ||
+                    !XNode.DeepEquals(Normalize(original), Normalize(XElement.Parse(region.Source))) ||
+                    !XNode.DeepEquals(Normalize(candidate), Normalize(XElement.Parse(region.Candidate)))) return false;
+                verifiedRegions.Add(original, candidate);
+            }
+        }
         if (mask.AttributeEdits.Count > 0)
         {
             var originals = Index(before);
@@ -47,7 +60,9 @@ internal static class OfficeXmlInvariant
             foreach (var edit in mask.AttributeEdits)
             {
                 var name = XName.Get(edit.LocalName, edit.NamespaceUri);
-                if (!originals.TryGetValue(edit.ElementPath, out var original) || !outputs.TryGetValue(edit.ElementPath, out var translated) ||
+                if (!originals.TryGetValue(edit.ElementPath, out var original)) return false;
+                if (original.AncestorsAndSelf().Any(verifiedRegions.ContainsKey)) continue;
+                if (!outputs.TryGetValue(edit.ElementPath, out var translated) ||
                     original.Attribute(name)?.Value != edit.SourceValue || translated.Attribute(name)?.Value != edit.Value)
                     return false;
                 original.SetAttributeValue(name, "");
@@ -60,7 +75,10 @@ internal static class OfficeXmlInvariant
             var outputIndex = Index(after);
             foreach (var (key, edit) in mask.ScalarEdits)
             {
-                if (!sourceIndex.TryGetValue(key, out var original) || !outputIndex.TryGetValue(key, out var translated) ||
+                if (!sourceIndex.TryGetValue(key, out var original)) return false;
+                // Exact region expectations already include translated descendants, even when moved.
+                if (original.AncestorsAndSelf().Any(verifiedRegions.ContainsKey)) continue;
+                if (!outputIndex.TryGetValue(key, out var translated) ||
                     original.HasElements || translated.HasElements ||
                     Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(original.Value))) != edit.SourceHash || translated.Value != edit.Value)
                     return false;
@@ -69,7 +87,17 @@ internal static class OfficeXmlInvariant
                 original.Attribute(XNamespace.Xml + "space")?.Remove();
                 translated.Attribute(XNamespace.Xml + "space")?.Remove();
             }
+            foreach (var (original, candidate) in verifiedRegions)
+            {
+                original.RemoveNodes();
+                candidate.RemoveNodes();
+            }
             return XNode.DeepEquals(Normalize(before), Normalize(after));
+        }
+        foreach (var (original, candidate) in verifiedRegions)
+        {
+            original.RemoveNodes();
+            candidate.RemoveNodes();
         }
         if (before.Name == Spreadsheet + "sst")
         {

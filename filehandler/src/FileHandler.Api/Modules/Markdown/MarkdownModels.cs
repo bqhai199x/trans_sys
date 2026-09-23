@@ -69,6 +69,11 @@ internal sealed record MarkerDefinition(int Id, MarkerKind Kind, string OpenSour
 {
 
     /// <summary>
+    /// Whether parsed source is a movable code, image or autolink object.
+    /// </summary>
+    public bool IsMovable { get; init; }
+
+    /// <summary>
     /// Whether empty emphasis delimiters can be omitted during restoration.
     /// </summary>
     public bool IsEmphasis { get; init; }

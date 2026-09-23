@@ -502,12 +502,12 @@ public sealed class MetadataAndSelectionTests
         var service = WordService.Create();
         var imported = await service.ImportAsync(new MemoryStream(bytes), true, default);
         Assert.Empty(imported.Errors);
-        Assert.Equal(new[] { "<ox:r0>Before</ox:r0><ox:k0/>", "After" }, imported.Texts);
+        Assert.Equal(new[] { "Before", "After" }, imported.Texts);
         Assert.Contains(imported.Metadata.Skipped, s => s.Code == "protected_content_control");
         Assert.Equal(2, imported.Metadata.Skipped.Count(s => s.Code == "cross_paragraph_field"));
         Assert.Contains("document[1]", imported.Metadata.Units![0].Location.Path);
         Assert.EndsWith("p[1]", imported.Metadata.Units[0].Location.Path);
-        var output = await service.ExportAsync(new MemoryStream(bytes), ["<ox:r0>Changed</ox:r0><ox:k0/>", "Tail"]);
+        var output = await service.ExportAsync(new MemoryStream(bytes), ["Changed", "Tail"]);
         Assert.Empty(output.Errors);
         using var document = WordprocessingDocument.Open(new MemoryStream(output.Content!), false);
         Assert.Equal(new[] { "Changed", "Locked", "Cached", "Tail" }, document.MainDocumentPart!.Document!.Descendants<W.Text>().Select(t => t.Text));

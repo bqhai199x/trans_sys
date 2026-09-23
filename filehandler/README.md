@@ -191,9 +191,11 @@ Open XML dùng `AutoSave=false`, `NoProcess`, kiểm tra package/schema, relatio
 
 ## Token dịch
 
-Markdown/Office dùng `<ox:r0>text</ox:r0>` cho slot dịch và `<ox:k0/>` cho anchor bảo vệ. Unit một slot không anchor là Plain; TXT luôn literal. Giữ IDs/thứ tự/cấu trúc token. Trong Structured, escape `\` thành `\\`, `<` thành `\<`.
+Markdown/Office dùng `<ox:r0>text</ox:r0>` cho slot dịch, `<ox:k0/>` cho anchor bảo vệ được di chuyển và `<ox:b0/>` cho boundary cố định. Chỉ đảo `rN`/`kN` trong cùng vùng giữa các `bN`; giữ nguyên mọi ID. Không trả metadata token. Trong Structured, escape `\` thành `\\`, `<` thành `\<`. Text thường không cần token; literal chứa prefix `<ox:` hoặc `</ox:` được bọc/escape bằng một run, kể cả TXT. Xem [contract token](docs/tokens.md).
 
-Run liền nhau cùng style/ngữ cảnh được gộp, kể cả Nhật/Latin. Khác style, hyperlink hoặc anchor giữ ranh giới. Slot riêng lẻ có thể rỗng nếu unit còn nội dung; toàn bộ unit rỗng sẽ skip. Các test vẫn kiểm tra nội dung/style/XML độc lập với mapping.
+Boundary đầu/cuối được ẩn, nhóm boundary liên tiếp ở giữa chỉ hiện một token; đối tượng nguồn vẫn giữ nội bộ để export. Unit chỉ còn một run và không có `kN` trả plain text, trừ literal chứa prefix dành riêng. Sau khi cập nhật logic này cần import lại file để lấy unit mới.
+
+Run liền nhau cùng style/ngữ cảnh được gộp, kể cả Nhật/Latin. Word gộp các run chỉ khác font hint khi xác định được font hiệu lực tương đương, giữ nguyên XML định dạng nguồn. Khác style, hyperlink hoặc anchor giữ ranh giới. Slot riêng lẻ có thể rỗng nếu unit còn nội dung; toàn bộ unit rỗng sẽ skip. Các test vẫn kiểm tra nội dung/style/XML độc lập với mapping.
 
 ## Client chuyển đổi
 

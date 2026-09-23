@@ -88,7 +88,7 @@ public sealed class PlainTextSegmenterTests
     [Fact]
     public void TreatsSyntaxAndNumbersAsLiteralText()
     {
-        const string source = "# Heading\n```\n**bold** [link](url) <b> &copy; <keepme01> \\\n123!?";
+        const string source = "# Heading\n```\n**bold** [link](url) <b> &copy; <custom-tag> \\\n123!?";
         var (units, error) = PlainTextSegmenter.Segment(source, 1, default);
         Assert.Null(error);
         Assert.Equal(source, source[Assert.Single(units).Start..units[0].End]);

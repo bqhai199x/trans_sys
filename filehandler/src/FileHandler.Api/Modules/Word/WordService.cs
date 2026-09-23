@@ -275,7 +275,7 @@ public sealed class WordService : IFileHandler
                 return new(null, ContentType, outputValidation.Errors) { Metadata = metadata.ForExport(true) };
             }
 
-            var structureValidation = _structureValidator.Validate(output.Content, plan, cancellationToken);
+            var structureValidation = _structureValidator.Validate(output.Content, plan, cancellationToken, _options);
             if (!structureValidation.IsValid)
             {
                 return new(null, ContentType, structureValidation.Errors) { Metadata = metadata.ForExport(true) };

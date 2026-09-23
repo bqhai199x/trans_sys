@@ -18,6 +18,84 @@ public sealed class OfficeStyleCoalescingTests
 {
 
     /// <summary>
+    /// Reorders shared rich strings using copy-on-write without changing another cell.
+    /// </summary>
+    /// <returns>Task completing after cell references, text and bold assertions.</returns>
+    [Fact]
+    public async Task Excel_SharedRichReorderPreservesOtherCell()
+    {
+        using var buffer = new MemoryStream();
+        buffer.Write(OfficeFixtureFactory.CreateExcelWithSharedStrings(["red car"], [[0, 0]]));
+        using (var document = SpreadsheetDocument.Open(buffer, true))
+        {
+            var item = document.WorkbookPart!.SharedStringTablePart!.SharedStringTable!.Elements<S.SharedStringItem>().Single();
+            item.RemoveAllChildren();
+            item.Append(new S.Run(new S.RunProperties(new S.Bold()), new S.Text("red")),
+                new S.Run(new S.Text(" car") { Space = DocumentFormat.OpenXml.SpaceProcessingModeValues.Preserve }));
+        }
+        var source = buffer.ToArray();
+        var service = Service("xlsx");
+        var imported = await service.ImportAsync(new MemoryStream(source), true, default);
+        var texts = ContentTexts(imported).ToArray();
+        texts[0] = "<ox:r1>xe </ox:r1><ox:r0>đỏ</ox:r0>";
+        var result = await ExportContentAsync(service, source, texts);
+        Assert.Empty(result.Errors);
+        Assert.DoesNotContain(result.Metadata.Skipped, skip => skip.Severity == SkipSeverity.Warning);
+        using var output = SpreadsheetDocument.Open(new MemoryStream(result.Content!), false);
+        var cells = output.WorkbookPart!.WorksheetParts.Single().Worksheet!.Descendants<S.Cell>().ToArray();
+        var items = output.WorkbookPart.SharedStringTablePart!.SharedStringTable!.Elements<S.SharedStringItem>().ToArray();
+        Assert.Equal("0", cells[1].CellValue!.Text);
+        Assert.Equal("red car", items[0].InnerText);
+        var translated = items[int.Parse(cells[0].CellValue!.Text)];
+        Assert.Equal("xe đỏ", translated.InnerText);
+        Assert.NotNull(translated.Elements<S.Run>().Last().RunProperties!.GetFirstChild<S.Bold>());
+    }
+
+    /// <summary>
+    /// Reorders rich runs while retaining bold properties on translated phrase.
+    /// </summary>
+    /// <param name="format">Office filename extension.</param>
+    /// <returns>Task completing after rendered text and formatting assertions.</returns>
+    [Theory]
+    [InlineData("docx")]
+    [InlineData("pptx")]
+    [InlineData("xlsx")]
+    public async Task Reorder_RetainsFormatting(string format)
+    {
+        var source = CreateRuns(format, ["car ", "red"], true);
+        var service = Service(format);
+        var imported = await service.ImportAsync(new MemoryStream(source), false, default);
+        var exported = await ExportContentAsync(service, source, ["<ox:r1>đỏ </ox:r1><ox:r0>xe</ox:r0>"]);
+        Assert.Empty(exported.Errors);
+        Assert.DoesNotContain(exported.Metadata.Skipped, skip => skip.Severity == SkipSeverity.Warning);
+        using var stream = new MemoryStream(exported.Content!);
+        if (format == "docx")
+        {
+            using var document = WordprocessingDocument.Open(stream, false);
+            var runs = document.MainDocumentPart!.Document!.Descendants<W.Run>().ToArray();
+            Assert.Equal("đỏ xe", document.MainDocumentPart.Document.InnerText);
+            Assert.NotNull(runs[0].RunProperties?.GetFirstChild<W.Bold>());
+            Assert.Null(runs[1].RunProperties?.GetFirstChild<W.Bold>());
+        }
+        else if (format == "pptx")
+        {
+            using var document = PresentationDocument.Open(stream, false);
+            var runs = document.PresentationPart!.SlideParts.Single().Slide!.Descendants<A.Run>().ToArray();
+            Assert.Equal("đỏ xe", string.Concat(runs.Select(r => r.InnerText)));
+            Assert.True(runs[0].RunProperties!.Bold!.Value);
+            Assert.Null(runs[1].RunProperties!.Bold);
+        }
+        else
+        {
+            using var document = SpreadsheetDocument.Open(stream, false);
+            var runs = document.WorkbookPart!.WorksheetParts.Single().Worksheet!.Descendants<S.Run>().ToArray();
+            Assert.Equal("đỏ xe", string.Concat(runs.Select(r => r.InnerText)));
+            Assert.NotNull(runs[0].RunProperties?.GetFirstChild<S.Bold>());
+            Assert.Null(runs[1].RunProperties?.GetFirstChild<S.Bold>());
+        }
+    }
+
+    /// <summary>
     /// Alternating Latin and Japanese date fragments.
     /// </summary>
     private static readonly string[] DateParts = ["2026", "年", "3", "月", "31", "日"];
@@ -180,12 +258,12 @@ public sealed class OfficeStyleCoalescingTests
         var service = Service(format);
         var imported = await service.ImportAsync(new MemoryStream(source), true, default);
         Assert.Empty(imported.Errors);
-        Assert.Equal("<ox:r0>A</ox:r0><ox:k0/><ox:r1>B</ox:r1>", Assert.Single(ContentTexts(imported)));
-        var exported = await ExportContentAsync(service, source, ["<ox:r0>X</ox:r0><ox:k0/><ox:r1>Y</ox:r1>"]);
+        Assert.Equal("<ox:r0>A</ox:r0><ox:b0/><ox:r1>B</ox:r1>", Assert.Single(ContentTexts(imported)));
+        var exported = await ExportContentAsync(service, source, ["<ox:r0>X</ox:r0><ox:b0/><ox:r1>Y</ox:r1>"]);
         Assert.Empty(exported.Errors);
         var reimported = await service.ImportAsync(new MemoryStream(exported.Content!), true, default);
         Assert.Empty(reimported.Errors);
-        Assert.Equal("<ox:r0>X</ox:r0><ox:k0/><ox:r1>Y</ox:r1>", Assert.Single(ContentTexts(reimported)));
+        Assert.Equal("<ox:r0>X</ox:r0><ox:b0/><ox:r1>Y</ox:r1>", Assert.Single(ContentTexts(reimported)));
     }
 
     /// <summary>
@@ -200,7 +278,7 @@ public sealed class OfficeStyleCoalescingTests
     {
         var imported = await Service("xlsx").ImportAsync(new MemoryStream(CreateRuns("xlsx", ["A", control, "B"])), true, default);
         Assert.Empty(imported.Errors);
-        Assert.Equal("<ox:r0>A</ox:r0><ox:k0/><ox:r1>B</ox:r1>", Assert.Single(ContentTexts(imported)));
+        Assert.Equal("<ox:r0>A</ox:r0><ox:b0/><ox:r1>B</ox:r1>", Assert.Single(ContentTexts(imported)));
     }
 
     /// <summary>

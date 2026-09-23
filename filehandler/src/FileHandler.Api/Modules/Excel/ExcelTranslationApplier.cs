@@ -119,7 +119,7 @@ public sealed class ExcelTranslationApplier
 
             if (drawingParts.TryGetValue(unit.Location.PartUri, out var drawing))
             {
-                OfficeTextBindings.Apply(drawing.WorksheetDrawing!, unit, decoded);
+                OfficeTextBindings.Apply(drawing.WorksheetDrawing!, unit, decoded, patch.EditMasks[unit.Location.PartUri]);
                 touchedParts.Add(unit.Location.PartUri);
                 continue;
             }
@@ -155,7 +155,7 @@ public sealed class ExcelTranslationApplier
                 }
                 else if (cell.DataType?.Value == CellValues.InlineString && cell.InlineString is not null)
                 {
-                    OfficeTextBindings.Apply(worksheet, unit, decoded);
+                    OfficeTextBindings.Apply(worksheet, unit, decoded, patch.EditMasks[unit.Location.PartUri]);
                     touchedParts.Add(unit.Location.PartUri);
                 }
             }

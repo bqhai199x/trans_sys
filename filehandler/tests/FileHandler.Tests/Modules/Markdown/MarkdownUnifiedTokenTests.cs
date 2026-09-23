@@ -12,6 +12,27 @@ public sealed class MarkdownUnifiedTokenTests
 {
 
     /// <summary>
+    /// Verifies public metadata and reordered formatting or inline code restoration.
+    /// </summary>
+    /// <param name="source">Original Markdown.</param>
+    /// <param name="translation">Reordered complete unit.</param>
+    /// <param name="expected">Rendered Markdown retaining source syntax bindings.</param>
+    /// <returns>Task completing after import metadata and export assertions.</returns>
+    [Theory]
+    [InlineData("**red** car", "<ox:r1>xe </ox:r1><ox:r0>đỏ</ox:r0>", "xe **đỏ**")]
+    [InlineData("Version `2.0` is required", "<ox:r1>Cần </ox:r1><ox:r0>phiên bản </ox:r0><ox:k0/>", "Cần phiên bản `2.0`")]
+    public async Task ReorderedBindingsPreserveFormatting(string source, string translation, string expected)
+    {
+        var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
+        var bytes = Encoding.UTF8.GetBytes(source);
+        var imported = await service.ImportAsync(new MemoryStream(bytes));
+        var output = await service.ExportAsync(new MemoryStream(bytes), [translation]);
+        Assert.Empty(output.Errors);
+        Assert.Empty(output.Metadata.Skipped);
+        Assert.Equal(expected, Encoding.UTF8.GetString(output.Content!));
+    }
+
+    /// <summary>
     /// Checks mixed scripts and equivalent adjacent formatting share one translation slot.
     /// </summary>
     /// <param name="source">Original Markdown source.</param>
@@ -35,7 +56,7 @@ public sealed class MarkdownUnifiedTokenTests
         Assert.Equal(bytes, identity.Content);
         var exported = await service.ExportAsync(new MemoryStream(bytes), ["Bản dịch"]);
         Assert.Empty(exported.Errors);
-        Assert.DoesNotContain("keepme", Encoding.UTF8.GetString(exported.Content!));
+        Assert.DoesNotContain("<ox:", Encoding.UTF8.GetString(exported.Content!));
         var reimported = await service.ImportAsync(new MemoryStream(exported.Content!));
         Assert.Empty(reimported.Errors);
         Assert.Equal("Bản dịch", Assert.Single(reimported.Texts));
@@ -92,7 +113,7 @@ public sealed class MarkdownUnifiedTokenTests
         var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
         var imported = await service.ImportAsync(new MemoryStream(Encoding.UTF8.GetBytes("[Track](https://a.test)[2](https://b.test)")));
         Assert.Empty(imported.Errors);
-        Assert.Equal("<ox:r0>Track</ox:r0><ox:r1>2</ox:r1>", Assert.Single(imported.Texts));
+        Assert.Equal("<ox:r0>Track</ox:r0><ox:b0/><ox:r1>2</ox:r1>", Assert.Single(imported.Texts));
     }
 
     /// <summary>
@@ -141,7 +162,7 @@ public sealed class MarkdownUnifiedTokenTests
         var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));
         var bytes = Encoding.UTF8.GetBytes("Before <span style=\"color:red\">red</span> after");
         var imported = await service.ImportAsync(new MemoryStream(bytes));
-        Assert.Equal("<ox:r0>Before </ox:r0><ox:k0/><ox:r1>red</ox:r1><ox:k1/><ox:r2> after</ox:r2>", Assert.Single(imported.Texts));
+        Assert.Equal("<ox:r0>Before </ox:r0><ox:b0/><ox:r1>red</ox:r1><ox:b1/><ox:r2> after</ox:r2>", Assert.Single(imported.Texts));
         var output = await service.ExportAsync(new MemoryStream(bytes), [imported.Texts[0].Replace(">red<", ">đỏ<", StringComparison.Ordinal)]);
         Assert.Empty(output.Errors);
         Assert.Equal("Before <span style=\"color:red\">đỏ</span> after", Encoding.UTF8.GetString(output.Content!));
@@ -166,18 +187,17 @@ public sealed class MarkdownUnifiedTokenTests
     }
 
     /// <summary>
-    /// Verifies malformed, reordered, nested or empty run tokens preserve source unit.
+    /// Verifies malformed, nested or empty run tokens preserve source unit.
     /// </summary>
     /// <param name="translation">Invalid structured translation.</param>
     /// <param name="code">Expected validation code.</param>
     /// <returns>Task representing completed assertions.</returns>
     [Theory]
-    [InlineData("<ox:r1>B</ox:r1><ox:r0>A</ox:r0>", "invalid_marker_syntax")]
     [InlineData("<ox:r0><ox:r1>A</ox:r1></ox:r0><ox:r1>B</ox:r1>", "invalid_marker_syntax")]
     [InlineData("<ox:r0>A</ox:r0><ox:r1>B</ox:r1>extra", "invalid_marker_syntax")]
     [InlineData("<ox:r0>\\q</ox:r0><ox:r1>B</ox:r1>", "invalid_marker_syntax")]
     [InlineData("<ox:r0> </ox:r0><ox:r1></ox:r1>", "empty_translation")]
-    [InlineData("<keepme1>A<keepme1/>B", "invalid_marker_syntax")]
+    [InlineData("<ox:r0>A<ox:r0/>B", "invalid_marker_syntax")]
     public async Task InvalidWireTokensPreserveSource(string translation, string code)
     {
         var service = MarkdownService.Create(Options.Create(new FileHandlingOptions()));

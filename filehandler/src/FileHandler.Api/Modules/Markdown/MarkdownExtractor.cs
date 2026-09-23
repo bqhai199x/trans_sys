@@ -49,7 +49,7 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
                 }
                 foreach (var label in labels)
                 {
-                    units.Add(new(label.Start, label.End, label.Text, new Dictionary<int, MarkerDefinition>(),
+                    units.Add(new(label.Start, label.End, TranslationTokenSyntax.EncodeLiteral(label.Text), new Dictionary<int, MarkerDefinition>(),
                         source.Lines.GetRange(label.Start, label.End), false, "\n", false)
                     {
                         IsMermaidLabel = true,
@@ -332,7 +332,10 @@ internal sealed class MarkdownExtractor : IMarkdownExtractor
     {
         var id = allocator.AllocateId();
         var raw = SafeSlice(source, inline.Span.Start, inline.Span.End + 1);
-        markers[id] = new(id, MarkerKind.Protected, raw, string.Empty);
+        markers[id] = new(id, MarkerKind.Protected, raw, string.Empty)
+        {
+            IsMovable = inline is CodeInline or AutolinkInline or LinkInline { IsImage: true }
+        };
         sb.Add(new(true, id, string.Empty, false));
         sb.Add(new(true, id, string.Empty, true));
     }

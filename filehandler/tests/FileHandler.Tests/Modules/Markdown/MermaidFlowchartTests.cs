@@ -66,7 +66,7 @@ public sealed class MermaidFlowchartTests
         Assert.Contains("V -->|\"Bản dịch 6\"| R", result);
         Assert.Contains("Q -. \"Bản dịch 10\" .-> V", result);
         Assert.Contains("flowchart LR" + newline, result);
-        Assert.DoesNotContain("keepme", result);
+        Assert.DoesNotContain("<ox:", result);
     }
 
     /// <summary>

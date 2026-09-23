@@ -151,9 +151,7 @@ Tất cả các bản ghi trong mục này có `severity=warning`, `stage=transl
 | `invalid_structure` | Heading tạo thêm dòng/block. | `Heading cannot add lines or blocks.` |
 | `invalid_structure` | Bản dịch làm thay đổi cấu trúc được bảo vệ trong block. | `Protected block structure changed; source retained.` |
 | `invalid_structure` | Nhãn Mermaid có control/newline. | `Mermaid labels cannot contain control characters.` |
-| `invalid_marker_syntax` | Token ox sai cú pháp, thứ tự hoặc escape. | `Preserve source tokens, order and escapes.` |
-| `invalid_marker_syntax` | Nhánh marker nội bộ cũ, cú pháp/ID sai. | `Invalid keepme marker syntax or ID.` |
-| `invalid_marker_syntax` | Marker không ở dạng chuẩn. | `Marker {marker} must use {canonical}.` |
+| `invalid_marker_syntax` | Token ox sai cú pháp, thứ tự hoặc escape. | `Preserve token IDs, escapes and bN boundaries; reorder rN/kN only within each region.` |
 | `protected_marker_not_empty` | Marker bảo vệ có nội dung. | `Protected marker must be empty.` |
 | `unexpected_marker` | Marker không thuộc unit. | `Unexpected marker {marker}.` |
 | `duplicate_marker` | Marker mở hoặc đóng bị lặp. | `Duplicate marker {marker}.` |
@@ -172,7 +170,7 @@ Mã chung này có các message cụ thể dưới đây; đây là các biến 
 | Text ngoài token | `Text outside tokens is not allowed.` |
 | Token không có prefix hợp lệ | `Tokens must start with '<ox:'.` |
 | Thiếu kết thúc cú pháp token | `Unterminated token.` |
-| Thứ tự sai | `Token order differs from source.` |
+| Thứ tự sai | `Token syntax, IDs or bN boundary regions differ from source.` |
 | Thẻ tự đóng sai | `Invalid self-closing token <ox:{token}/>.` |
 | Anchor không khớp | `Anchor {token} differs from source.` |
 | Thẻ mở sai | `Invalid opening token <ox:{token}>.` |

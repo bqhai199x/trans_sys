@@ -17,16 +17,18 @@ public sealed class WordStructureValidator
     /// <param name="outputBytes">Translated document bytes.</param>
     /// <param name="plan">Original document plan.</param>
     /// <param name="cancellationToken">Cancellation token.</param>
+    /// <param name="options">Request processing limits, or defaults for standalone validation.</param>
     /// <returns>Validation result.</returns>
     public OfficeValidationResult Validate(
         byte[] outputBytes,
         WordPlan plan,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        OfficeProcessingOptions? options = null)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         using var ms = new MemoryStream(outputBytes);
-        using var doc = WordprocessingDocument.Open(ms, false, OfficeTextBindings.Settings(new OfficeProcessingOptions()));
+        using var doc = WordprocessingDocument.Open(ms, false, OfficeTextBindings.Settings(options ?? new OfficeProcessingOptions()));
 
         if (doc.MainDocumentPart?.Document?.Body is null)
             return OfficeValidationResult.Failure([new FileError("office_output_invalid", ProcessingMessages.MissingOutputBody)]);
