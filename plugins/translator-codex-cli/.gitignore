@@ -1,0 +1,8 @@
+__pycache__/
+*.egg-info/
+*.sqlite*
+build/
+dist/
+gateway/node_modules/
+gateway/dist/
+gateway/bundle/

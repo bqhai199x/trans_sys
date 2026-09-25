@@ -1,0 +1,7 @@
+include README.md config.example.json
+recursive-include docs *.json
+include gateway/package.json gateway/package-lock.json gateway/tsconfig.json
+include gateway/install.ps1 gateway/login.ps1 gateway/build-bundle.ps1
+recursive-include gateway/src *.ts
+recursive-include gateway/test *.mjs
+recursive-include tests *.py

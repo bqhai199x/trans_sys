@@ -1,0 +1,15 @@
+{
+  "plugins": {
+    "codex": {
+      "database": "/var/lib/translator-codex-cli/gateway.sqlite",
+      "public_url": "https://translator.example.com",
+      "gateway_bundle": "/opt/translator-codex-cli/gateway-bundle.zip",
+      "turn_timeout_seconds": 600,
+      "request_lease_seconds": 60,
+      "offline_seconds": 45,
+      "model_cache_seconds": 600,
+      "receipt_retention_seconds": 86400
+    }
+  },
+  "model_capabilities": {}
+}
