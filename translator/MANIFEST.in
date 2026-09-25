@@ -1,0 +1,4 @@
+include README.md requirements.lock config.example.json Dockerfile
+recursive-include deploy *.service
+recursive-include docs *.md *.json
+recursive-include tests *.py

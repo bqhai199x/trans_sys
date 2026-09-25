@@ -1,0 +1,19 @@
+[Unit]
+Description=Translator API
+After=network-online.target
+
+[Service]
+User=translator
+Group=translator
+WorkingDirectory=/opt/translator
+Environment=TRANSLATOR_CONFIG=/etc/translator/config.json
+ExecStart=/opt/translator/.venv/bin/uvicorn translation_service.api:create_app --factory --host 127.0.0.1 --port 8000 --no-access-log
+Restart=on-failure
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

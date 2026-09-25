@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "translator-codex-cli"
+version = "0.2.0"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["trans-sys-translator>=0.2,<0.3"]
+
+[project.entry-points."translation_service.plugins"]
+codex = "translator_codex_cli:register"
+
+[tool.setuptools.packages.find]
+where = ["src"]

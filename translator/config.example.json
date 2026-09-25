@@ -1,0 +1,10 @@
+{
+  "model_capabilities": {},
+  "plugins": {},
+  "max_request_bytes": 8000000,
+  "max_units": 10000,
+  "max_unit_chars": 200000,
+  "max_batch_units": 40,
+  "provider_timeout_seconds": 600,
+  "reasoning_budget_tokens": 4096
+}
